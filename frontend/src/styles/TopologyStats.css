@@ -1,0 +1,105 @@
+.stats-container {
+  background: white;
+  padding: 20px;
+  border-radius: 8px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+  height: 100%;
+  overflow-y: auto;
+}
+
+.stats-header {
+  margin-bottom: 20px;
+}
+
+.stats-header h2 {
+  margin: 0 0 8px 0;
+  color: #333;
+  font-size: 20px;
+}
+
+.topology-id {
+  color: #666;
+  font-size: 14px;
+  font-style: italic;
+}
+
+.stats-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 12px;
+  margin-bottom: 24px;
+}
+
+.stat-card {
+  background: #f8f9fa;
+  padding: 16px;
+  border-radius: 8px;
+  border: 1px solid #e9ecef;
+}
+
+.stat-card.full-width {
+  grid-column: 1 / -1;
+}
+
+.stat-label {
+  color: #6c757d;
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  margin-bottom: 8px;
+}
+
+.stat-value {
+  color: #4A90E2;
+  font-size: 32px;
+  font-weight: bold;
+}
+
+.stat-value-small {
+  color: #333;
+  font-size: 14px;
+  font-weight: 500;
+}
+
+.nodes-list {
+  margin-top: 24px;
+}
+
+.nodes-list h3 {
+  margin: 0 0 12px 0;
+  color: #333;
+  font-size: 16px;
+}
+
+.nodes-scroll {
+  max-height: 400px;
+  overflow-y: auto;
+}
+
+.node-item {
+  background: #f8f9fa;
+  padding: 12px;
+  border-radius: 6px;
+  margin-bottom: 8px;
+  border-left: 3px solid #4A90E2;
+}
+
+.node-name {
+  font-weight: 600;
+  color: #333;
+  margin-bottom: 4px;
+}
+
+.node-details {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.node-detail {
+  font-size: 12px;
+  color: #6c757d;
+  background: white;
+  padding: 4px 8px;
+  border-radius: 4px;
+}
