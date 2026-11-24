@@ -45,7 +45,8 @@ class FakeOdl(BaseHTTPRequestHandler):
         if "xconnect-groups" in self.path:
             return self._send(409, DATA_MISSING)
         for qid, key in (("cisco-l2vpn-config", "l2vpn-cfg:l2vpn/database"), ("e2e-bridge-ports", "l2fib-bridge-ports"),
-                         ("cisco-l2vpn", "l2vpn-forwarding/nodes"),
+                         ("cisco-l2vpn", "l2vpn-forwarding/nodes"), ("cisco-rib-ipv4", "ip-rib-ipv4-oper"),
+                         ("cisco-ethernet-stats", "drivers-media-eth-oper"),
                          ("cisco-interfaces-xr", "pfi-im-cmd-oper"), ("e2e-interface-config", "ifmgr-cfg"),
                          ("cisco-lldp-native", "ethernet-lldp-oper")):
             if key in self.path:
@@ -56,8 +57,11 @@ class FakeOdl(BaseHTTPRequestHandler):
         body = self.rfile.read(int(self.headers.get("Content-Length") or 0)).decode()
         FakeOdl.calls.append(("POST", self.path))
         d = nokia_data()
-        for marker, qid in (("<configure", "config-services"), ("<epipe/>", "epipe-state"), ("<vpls/>", "vpls-state"),
-                            ("<sdp/>", "sdp-state"), ("<lldp/>", "lldp"), ("<system/>", "system")):
+        for marker, qid in (("<service/></configure>", "config-services"), ("<router/></configure>", "config-router-config"),
+                            ("<epipe/>", "epipe-state"), ("<vpls/>", "vpls-state"), ("<sdp/>", "sdp-state"),
+                            ("<lldp/>", "lldp"), ("<lsp/>", "mpls-lsp-state"), ("<rsvp/>", "rsvp"),
+                            ("<router><interface/>", "router-interface-state"), ("<lag/>", "lag"),
+                            ("<port/></state>", "port-state"), ("<system/>", "system")):
             if marker in body:
                 return self._send(200, {"ietf-netconf:output": {"data": d.get(qid, {})}})
         return self._send(200, {"ietf-netconf:output": {"data": {}}})

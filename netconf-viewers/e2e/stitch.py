@@ -27,7 +27,75 @@ FAULT_BITS = ("lac-ingress-fault", "lac-egress-fault", "psn-ingress-fault", "psn
 
 
 def _slim(ep):
-    return {k: ep.get(k) for k in ("key", "type", "id", "name", "description", "oper", "vplsId", "acs")}
+    return {k: ep.get(k) for k in ("key", "type", "id", "name", "description", "oper", "vplsId", "acs", "objKey")}
+
+
+def walk_path(inv, start_pe, peer, max_hops=12):
+    """Follow the route to `peer` router by router, as far as routers with a saved RIB reach (Cisco).
+
+    Each hop: the router, its egress interface and port health, next hop and label stack. The next
+    router is found from the LLDP neighbour's address or the next-hop address."""
+    hops, cur, seen = [], start_pe, {start_pe["node"]}
+    target = inv.resolve(peer)
+    while cur is not None and len(hops) < max_hops:
+        fn = cur.get("_transport_to")
+        if not fn:
+            break
+        t = fn(peer)
+        prim = next((p for p in t.get("paths") or [] if p["role"] == "primary"), None)
+        hop = {"node": cur["node"], "name": cur["name"], "peKey": cur.get("key"), "routeKey": t.get("routeKey")}
+        if not prim:
+            hop["note"] = "no route" if not t.get("note") else t["note"]
+            hops.append(hop)
+            break
+        port = prim.get("port") or {}
+        hop.update(interface=prim.get("interface"), interfaceKey=prim.get("interfaceKey"), nextHop=prim.get("nextHop"),
+                   nextHopName=prim.get("nextHopName"), labels=prim.get("labels"),
+                   port={k: port.get(k) for k in ("key", "id", "oper", "health", "why", "neighbor")} if port else None)
+        hops.append(hop)
+        nxt = inv.resolve(prim.get("nextHopMgmt")) or inv.resolve(prim.get("nextHop"))
+        if not nxt or nxt in seen:
+            break
+        if nxt == target:
+            tp = inv.pe(nxt)
+            hops.append({"node": nxt, "name": tp["name"], "peKey": tp.get("key"), "final": True})
+            break
+        seen.add(nxt)
+        cur = inv.pe(nxt)
+    return hops
+
+
+def _refs(x, out):
+    """Every object key mentioned anywhere in x (fields named *Key / key, and link cells)."""
+    if isinstance(x, dict):
+        for k, v in x.items():
+            if isinstance(v, str) and (k == "key" or k == "k" or k.endswith("Key")) and v.count("|") >= 2:
+                out.add(v)
+            elif isinstance(v, (dict, list)):
+                _refs(v, out)
+    elif isinstance(x, list):
+        for v in x:
+            _refs(v, out)
+    return out
+
+
+def collect_objects(inv, pe, services):
+    """The detail objects the page can open: all of this router's, plus the far-end and transit objects
+    the services point to, and what those link to (two steps), so the report stays small."""
+    objects = dict(pe.get("objects") or {})
+    todo = [k for k in _refs(services, set()) if k not in objects]
+    for _depth in range(3):
+        nxt = []
+        for k in todo:
+            node = k.split("|")[1]
+            src = (inv.pe(node) or {}).get("objects") or {}
+            o = src.get(k)
+            if o is None or k in objects:
+                continue
+            objects[k] = o
+            nxt += [r for r in _refs({"links": o.get("links"), "tables": o.get("tables")}, set()) if r not in objects]
+        todo = nxt
+    return objects
 
 
 def match_remote(ep, pw, local_pe, remote_pe):
@@ -68,6 +136,8 @@ def stitch_endpoint(ep, local_pe, inv):
         if ac["oper"] in ("down", "admin-down") and not ac.get("adminShutdown"):
             why = f", port {ac['port']} is down" if ac.get("portOper") == "down" or "port-oper-down" in ac.get("flags", "") else ""
             add("critical", f"Access circuit {ac['id']} is {ac['oper']}{why}.")
+        elif ac.get("portIssue"):
+            add(ac["portIssue"][0], f"{ac['portIssue'][1]} (AC {ac['id']})")
     point_to_point = ep["type"] in ("epipe", "p2p")
     if not ep["acs"] and point_to_point and len(ep["pws"]) < 2:
         add("warning", "No access circuit on this PE side: a point-to-point service needs one at each end.")
@@ -87,10 +157,15 @@ def stitch_endpoint(ep, local_pe, inv):
             add("critical", f"Pseudowire {pw['id']} to {pw.get('peer')} is {pw['oper']}.")
         if tr.get("sdpOper") == "down":
             add("critical", f"{tr.get('name')} towards {pw.get('peer')} is down (transport).")
-        if tr.get("lspOper") == "down":
-            add("critical", f"{tr.get('name')}: the LSP is down (transport).")
+        if tr.get("lspOper") == "down" and not tr.get("issues"):
+            add("critical", f"{tr.get('name')}: the LSP is down (transport).")  # else the transport issues say it with the fail code
         if any(b in (pw.get("peerStatus") or "") for b in FAULT_BITS):
             add("warning", f"The far end of {pw['id']} reports '{pw['peerStatus']}'. Check its access circuit.")
+        for i in tr.get("issues") or []:
+            add(i["sev"], i["msg"])
+        walk = walk_path(inv, local_pe, pw.get("peer"))
+        if len(walk) > 1:
+            leg["walk"] = walk
 
         node = inv.resolve(pw.get("peer"))
         fe = leg["farEnd"]
@@ -102,7 +177,7 @@ def stitch_endpoint(ep, local_pe, inv):
             fe.update(status="not-collected")
         else:
             rpe = inv.pe(node)
-            fe.update(node=node, vendor=rpe["vendor"], name=rpe["name"])
+            fe.update(node=node, vendor=rpe["vendor"], name=rpe["name"], peKey=rpe.get("key"))
             m = match_remote(ep, pw, local_pe, rpe)
             if not m:
                 fe["status"] = "no-service"
@@ -121,6 +196,10 @@ def stitch_endpoint(ep, local_pe, inv):
                 for rac in rep["acs"]:
                     if rac["oper"] in ("down", "admin-down") and not rac.get("adminShutdown"):
                         add("critical", f"Far end: access circuit {rac['id']} on {rpe['name']} is {rac['oper']}.")
+                    elif rac.get("portIssue"):
+                        add(rac["portIssue"][0], f"Far end {rpe['name']}: {rac['portIssue'][1]}")
+                for i in ((rpw or {}).get("transport") or {}).get("issues") or []:
+                    add(i["sev"], f"Return path from {rpe['name']}: {i['msg']}")
         legs.append(leg)
 
     not_collected = sorted({l["farEnd"]["ip"] for l in legs if l["farEnd"]["status"] == "not-collected"})
@@ -149,7 +228,12 @@ def stitch_endpoint(ep, local_pe, inv):
         status = "partial"
     else:
         status = "up"
-    issues.sort(key=lambda i: SEV[i["sev"]])
+    seen, unique = set(), []
+    for i in issues:  # SDPs and LSPs are shared by many bindings: report each message once
+        if i["msg"] not in seen:
+            seen.add(i["msg"])
+            unique.append(i)
+    issues = sorted(unique, key=lambda i: SEV[i["sev"]])
     rec = dict(ep)
     rec.update({"legs": legs, "status": status, "issues": issues,
                 "ces": sorted({a["ce"]["name"] for a in ep["acs"] if a.get("ce") and a["ce"].get("name")})})
@@ -181,7 +265,8 @@ def build_report_model(node, inv=None):
     counts["farEnds"] = len(far)
     counts["farEndsMissing"] = sum(1 for f in far.values() if not f["collected"])
     wanted = (nokia if pe["vendor"] == "nokia" else cisco).QUERIES
-    return {"node": node, "vendor": pe["vendor"], "name": pe["name"], "loopbacks": pe["loopbacks"],
+    return {"node": node, "vendor": pe["vendor"], "name": pe["name"], "loopbacks": pe["loopbacks"], "peKey": pe.get("key"),
+            "objects": collect_objects(inv, pe, services),
             "generated": dt.datetime.now().isoformat(timespec="minutes"), "services": services,
             "farEnds": sorted(far.values(), key=lambda f: (f["collected"], f["ip"])), "counts": counts,
             "queries": pe.get("queries", []), "missing": [q for q in wanted if q not in pe.get("queries", [])],

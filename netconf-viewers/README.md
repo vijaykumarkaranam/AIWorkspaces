@@ -25,6 +25,30 @@ CE ─LLDP─ SAP / AC ─ [this PE: service] ─ PW (SDP + LSP / LDP-SR) ─ [f
 
 The Nokia **Service trace** tab also shows the far ends of the selected service.
 
+### Transport path and connected ports
+
+Under each pseudowire, **Transport path and connected ports** shows how the service crosses the core,
+in both directions when the far end is saved (the return path is read from the far-end PE):
+
+| | Nokia (RSVP-TE) | Cisco (SR-MPLS / IGP) |
+|---|---|---|
+| Tunnel | SDP, LSP state, metric, FRR and bypass in use, transitions, fail code | RIB route to the far-end loopback, SR prefix-SID label |
+| Paths | RSVP session: out-label, next hop, egress interface | primary and TI-LFA backup paths with their label stacks |
+| Ports | interface → port or LAG → member ports | egress interface |
+| Port health | state, LLDP neighbour and its port, errors and CRC, optics Rx/Tx, LAG members up | state, LLDP neighbour and its port, CRC and symbol errors, optics per lane |
+| Hops | hop-by-hop path from `nokia_view/pce-lsp-inventory.csv` (PCEP export), with router names | router by router, as far as routers with a saved RIB reach |
+
+Port findings: a port that is down is critical. An optics warning or a LAG member down is a warning.
+Error counters alone are info, because they count since the last clear.
+
+### Full details of every object
+
+Every underlined item opens a side panel with its full details. These are SDPs, LSPs, RSVP sessions,
+router interfaces, ports, LAGs, routes, services (local and far end) and PEs. The panel shows a summary,
+related tables, links to related objects (for example LSP → interface → LAG → member port), and
+**All fields** exactly as the router returned them, with a filter. Use **Back** to return through the
+objects you opened, and **Close** or Esc to close the panel.
+
 ### How the far end is found
 
 1. Each pseudowire's far-end address comes from the SDP far end (Nokia) or the PW neighbour, or from
