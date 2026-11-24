@@ -39,3 +39,14 @@ logs/
 # Temporary files
 *.tmp
 *.temp
+
+# netconf-viewers: device data and generated reports stay local (IPs, circuits, customers)
+netconf-viewers/**/results/
+netconf-viewers/**/store/
+netconf-viewers/**/exports/
+netconf-viewers/**/*.csv
+netconf-viewers/**/*_device_report.html
+netconf-viewers/**/*_view.html
+netconf-viewers/**/cisco_report.html
+__pycache__/
+*.pyc

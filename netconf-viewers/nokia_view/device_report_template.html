@@ -1,0 +1,709 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>__TITLE__</title>
+<style>
+:root{--bg:#f6f7f9;--panel:#fff;--ink:#1b1f24;--muted:#5b6470;--line:#e2e5ea;--accent:#2457c5;--accent-soft:#e8eefb;
+--ok:#1a7f37;--ok-soft:#e3f3e7;--warn:#9a6700;--warn-soft:#fff4d6;--bad:#c62828;--bad-soft:#fde7e7;--info:#4b5563;--info-soft:#eef0f3;
+--mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;--sans:system-ui,-apple-system,"Segoe UI",Roboto,Arial,sans-serif}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#0f1216;--panel:#171b21;--ink:#e6e9ee;--muted:#9aa4b2;--line:#2a3038;
+--accent:#7aa2ff;--accent-soft:#1c2638;--ok:#4cc26b;--ok-soft:#14281b;--warn:#e0b341;--warn-soft:#2c2412;--bad:#ff6b6b;--bad-soft:#331a1a;--info:#aab3bf;--info-soft:#20252c}}
+:root[data-theme="dark"]{--bg:#0f1216;--panel:#171b21;--ink:#e6e9ee;--muted:#9aa4b2;--line:#2a3038;
+--accent:#7aa2ff;--accent-soft:#1c2638;--ok:#4cc26b;--ok-soft:#14281b;--warn:#e0b341;--warn-soft:#2c2412;--bad:#ff6b6b;--bad-soft:#331a1a;--info:#aab3bf;--info-soft:#20252c}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:14px/1.45 var(--sans)}
+header{background:var(--panel);border-bottom:1px solid var(--line);padding:14px 20px;display:flex;flex-wrap:wrap;gap:8px 24px;align-items:baseline}
+header h1{font-size:20px;margin:0}
+header .meta{color:var(--muted);font-size:13px}
+header .meta b{color:var(--ink);font-weight:600}
+nav{position:sticky;top:0;z-index:5;background:var(--panel);border-bottom:1px solid var(--line);display:flex;overflow-x:auto;padding:0 12px}
+nav button{border:0;background:none;color:var(--muted);padding:11px 12px;font:inherit;cursor:pointer;border-bottom:2px solid transparent;white-space:nowrap}
+nav button.on{color:var(--accent);border-bottom-color:var(--accent);font-weight:600}
+nav button .ct{font-size:11px;background:var(--info-soft);color:var(--muted);border-radius:9px;padding:1px 6px;margin-left:4px}
+main{padding:18px 20px;max-width:1600px;margin:0 auto}
+section.tab{display:none}section.tab.on{display:block}
+h2{font-size:17px;margin:4px 0 4px}h3{font-size:14px;margin:18px 0 8px}
+.lead{color:var(--muted);margin:0 0 14px;max-width:900px}
+.grid{display:grid;gap:12px}
+.kpis{grid-template-columns:repeat(auto-fill,minmax(150px,1fr))}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:12px 14px}
+.kpi .v{font-size:24px;font-weight:650}.kpi .l{color:var(--muted);font-size:12px}.kpi .s{font-size:12px;margin-top:2px}
+.two{grid-template-columns:repeat(auto-fit,minmax(420px,1fr))}
+.toolbar{display:flex;gap:8px;align-items:center;margin:0 0 8px;flex-wrap:wrap}
+.toolbar input,.toolbar select{font:inherit;padding:6px 9px;border:1px solid var(--line);border-radius:6px;background:var(--panel);color:var(--ink);min-width:220px}
+.toolbar .count{color:var(--muted);font-size:12px}
+.tw{overflow:auto;background:var(--panel);border:1px solid var(--line);border-radius:8px;max-height:70vh}
+table{border-collapse:collapse;width:100%;font-size:13px}
+th,td{padding:6px 9px;border-bottom:1px solid var(--line);text-align:left;vertical-align:top;white-space:nowrap}
+th{position:sticky;top:0;background:var(--panel);color:var(--muted);font-weight:600;cursor:pointer;user-select:none;z-index:1}
+th.num,td.num{text-align:right;font-variant-numeric:tabular-nums}
+td.wrap{white-space:normal;min-width:220px;max-width:460px}
+tbody tr{cursor:pointer}tbody tr:hover{background:var(--accent-soft)}
+.mono{font-family:var(--mono);font-size:12px}
+.pill{display:inline-block;padding:1px 8px;border-radius:10px;font-size:12px;font-weight:600}
+.p-ok{background:var(--ok-soft);color:var(--ok)}.p-bad{background:var(--bad-soft);color:var(--bad)}
+.p-warn{background:var(--warn-soft);color:var(--warn)}.p-info{background:var(--info-soft);color:var(--info)}
+.muted{color:var(--muted)}.small{font-size:12px}
+.chip{display:inline-block;border:1px solid var(--line);border-radius:5px;padding:0 6px;margin:1px 2px 1px 0;font-size:12px;background:var(--bg)}
+.chip.link{cursor:pointer;color:var(--accent)}
+#drawer{position:fixed;top:0;right:0;height:100vh;width:min(780px,100vw);background:var(--panel);border-left:1px solid var(--line);
+box-shadow:-8px 0 24px rgba(0,0,0,.15);transform:translateX(105%);transition:transform .18s;z-index:20;display:flex;flex-direction:column}
+#drawer.on{transform:none}
+#drawer.max{width:100vw}
+#drawer .grip{position:absolute;left:0;top:0;bottom:0;width:6px;cursor:col-resize}
+#drawer .grip:hover{background:var(--accent-soft)}
+#drawer button.x.mx{margin-right:0}
+#drawer .hd{padding:14px 18px;border-bottom:1px solid var(--line);display:flex;gap:10px;align-items:center}
+#drawer .hd h2{flex:1;margin:0;font-size:16px;word-break:break-all}
+#drawer .bd{padding:6px 18px 30px;overflow:auto;flex:1}
+#drawer button.x{border:1px solid var(--line);background:var(--bg);color:var(--ink);border-radius:6px;padding:4px 10px;cursor:pointer;font:inherit}
+dl.kv{display:grid;grid-template-columns:minmax(150px,max-content) 1fr;gap:3px 14px;margin:0}
+dl.kv dt{color:var(--muted)}dl.kv dd{margin:0;word-break:break-word}
+.raw td{white-space:normal;word-break:break-all}
+.chain{display:flex;align-items:stretch;gap:0;overflow-x:auto;padding:4px 0 10px}
+.node{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:8px 10px;min-width:150px;max-width:260px;font-size:12px}
+.node .t{font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em}
+.node .n{font-weight:600;font-size:13px;word-break:break-word}
+.arrow{align-self:center;color:var(--muted);padding:0 6px;font-size:16px}
+.hop{display:inline-block;border:1px solid var(--line);border-radius:6px;padding:2px 6px;margin:2px;font-size:11px;background:var(--bg)}
+.hop b{display:block;font-size:12px}
+.sev-critical{border-left:4px solid var(--bad)}.sev-warning{border-left:4px solid var(--warn)}.sev-info{border-left:4px solid var(--line)}
+.bar{height:8px;border-radius:4px;background:var(--info-soft);overflow:hidden;min-width:60px}.bar>i{display:block;height:100%;background:var(--accent)}
+svg text{fill:var(--ink);font-family:var(--sans)}
+.legend span{margin-right:12px;font-size:12px;color:var(--muted)}
+.legend i{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:4px;vertical-align:-1px}
+.foot{color:var(--muted);font-size:12px;margin-top:18px}
+button.btn{font:inherit;border:1px solid var(--line);background:var(--panel);color:var(--ink);padding:5px 10px;border-radius:6px;cursor:pointer}
+@media (max-width:700px){main{padding:12px}.two{grid-template-columns:1fr}header{padding:12px}}
+
+/* ---- glass look: translucent panels over a soft colour field ---- */
+:root{--glass:rgba(255,255,255,.58);--glass-strong:rgba(255,255,255,.80);--glass-line:rgba(255,255,255,.75);
+  --glow:0 10px 30px rgba(36,87,197,.12);--grad:linear-gradient(135deg,#2457c5 0%,#7c5cff 55%,#14b8a6 100%)}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--glass:rgba(23,27,33,.55);--glass-strong:rgba(23,27,33,.82);
+  --glass-line:rgba(255,255,255,.09);--glow:0 10px 30px rgba(122,162,255,.14);--grad:linear-gradient(135deg,#7aa2ff 0%,#b59cff 55%,#5eead4 100%)}}
+:root[data-theme="dark"]{--glass:rgba(23,27,33,.55);--glass-strong:rgba(23,27,33,.82);--glass-line:rgba(255,255,255,.09);
+  --glow:0 10px 30px rgba(122,162,255,.14);--grad:linear-gradient(135deg,#7aa2ff 0%,#b59cff 55%,#5eead4 100%)}
+body{min-height:100vh;background:
+  radial-gradient(1100px 560px at 8% -12%,rgba(124,92,255,.24),transparent 62%),
+  radial-gradient(900px 520px at 96% -4%,rgba(20,184,166,.20),transparent 60%),
+  radial-gradient(900px 620px at 52% 115%,rgba(36,87,197,.20),transparent 60%),
+  var(--bg);background-attachment:fixed}
+header,nav{background:var(--glass-strong);backdrop-filter:blur(18px) saturate(160%);-webkit-backdrop-filter:blur(18px) saturate(160%);
+  border-bottom:1px solid var(--glass-line);box-shadow:0 8px 30px rgba(0,0,0,.06)}
+header h1{background:var(--grad);-webkit-background-clip:text;background-clip:text;color:transparent;font-weight:750;letter-spacing:-.01em}
+nav button{border-radius:10px 10px 0 0;transition:background .15s,color .15s}
+nav button:hover{background:rgba(124,92,255,.08);color:var(--ink)}
+nav button.on{background:linear-gradient(180deg,rgba(124,92,255,.16),transparent 90%)}
+h2{background:var(--grad);-webkit-background-clip:text;background-clip:text;color:transparent;display:inline-block}
+.card,.tw{background:var(--glass);
+  border:1px solid var(--glass-line);box-shadow:var(--glow),0 1px 0 rgba(255,255,255,.35) inset;border-radius:14px}
+.card{transition:transform .18s ease,box-shadow .18s ease}
+.card:hover{transform:translateY(-2px);box-shadow:0 16px 40px rgba(36,87,197,.18),0 1px 0 rgba(255,255,255,.4) inset}
+.kpi .v{background:var(--grad);-webkit-background-clip:text;background-clip:text;color:transparent;font-size:28px}
+th{background:var(--glass-strong)}
+tbody tr:hover{background:rgba(124,92,255,.08)}
+.pill{border:1px solid rgba(255,255,255,.45);backdrop-filter:blur(4px);box-shadow:0 2px 8px rgba(0,0,0,.05)}
+.p-ok{box-shadow:0 0 0 3px rgba(26,127,55,.08),0 2px 8px rgba(26,127,55,.15)}
+.p-bad{box-shadow:0 0 0 3px rgba(198,40,40,.08),0 2px 10px rgba(198,40,40,.22)}
+.chip{background:var(--glass);backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px);border-radius:8px;border-color:var(--glass-line)}
+.chip.link:hover{background:rgba(124,92,255,.14);box-shadow:0 4px 12px rgba(124,92,255,.2)}
+.node,.hop{background:var(--glass);backdrop-filter:blur(10px);border-radius:12px;border-color:var(--glass-line)}
+.toolbar input,.toolbar select,button.btn,#drawer button.x{background:var(--glass-strong);backdrop-filter:blur(8px);border-radius:10px;border-color:var(--glass-line)}
+button.btn:hover,#drawer button.x:hover{box-shadow:0 4px 14px rgba(36,87,197,.22)}
+#drawer{background:var(--glass-strong);backdrop-filter:blur(24px) saturate(160%);-webkit-backdrop-filter:blur(24px) saturate(160%);
+  border-left:1px solid var(--glass-line);box-shadow:-18px 0 50px rgba(0,0,0,.18)}
+#drawer .hd{background:transparent}
+.sev-critical{border-left-width:5px}
+main section.tab.on{animation:fadeUp .35s ease both}
+@keyframes fadeUp{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
+.tw::-webkit-scrollbar,#drawer .bd::-webkit-scrollbar{width:10px;height:10px}
+.tw::-webkit-scrollbar-thumb,#drawer .bd::-webkit-scrollbar-thumb{background:rgba(124,92,255,.35);border-radius:10px;border:3px solid transparent;background-clip:padding-box}
+@media (prefers-reduced-motion:reduce){main section.tab.on,.card{animation:none;transition:none}}
+
+/* ---- fancy layer: moving colour aura, gradient-edged cards, glowing tabs, status pulses ---- */
+body{position:relative}
+body::before{content:"";position:fixed;left:-30%;top:-30%;width:160%;height:160%;z-index:-1;pointer-events:none;
+  background:conic-gradient(from 0deg,rgba(124,92,255,.22),rgba(20,184,166,.18),rgba(36,87,197,.20),rgba(244,114,182,.12),rgba(124,92,255,.22));
+  filter:blur(80px);opacity:.85}
+@keyframes aurora{to{transform:rotate(360deg)}}
+main{position:relative;z-index:1}
+.card{position:relative;overflow:hidden}
+.card::before{content:"";position:absolute;inset:0;border-radius:inherit;padding:1px;pointer-events:none;opacity:.45;transition:opacity .25s;
+  background:linear-gradient(135deg,rgba(124,92,255,.9),rgba(20,184,166,.6),rgba(36,87,197,.1));
+  -webkit-mask:linear-gradient(#000 0 0) content-box,linear-gradient(#000 0 0);-webkit-mask-composite:xor;
+  mask:linear-gradient(#000 0 0) content-box exclude,linear-gradient(#000 0 0)}
+.card:hover::before{opacity:1}
+.kpi .v{text-shadow:0 0 28px rgba(124,92,255,.28)}
+nav button{position:relative;font-weight:500}
+nav button.on{border-bottom-color:transparent}
+nav button.on::after{content:"";position:absolute;left:12px;right:12px;bottom:-1px;height:3px;border-radius:3px;background:var(--grad);box-shadow:0 0 14px rgba(124,92,255,.65)}
+th{text-transform:uppercase;letter-spacing:.03em;font-size:11px}
+tbody tr:nth-child(even){background:rgba(127,127,160,.045)}
+tbody tr:hover{background:rgba(124,92,255,.12)}
+.pill::before{content:"";display:inline-block;width:6px;height:6px;border-radius:50%;background:currentColor;margin-right:6px;vertical-align:1px;box-shadow:0 0 8px currentColor}
+.p-bad::before{animation:pulse 1.6s ease-in-out infinite}
+@keyframes pulse{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.35;transform:scale(.7)}}
+h3{letter-spacing:.01em}
+.kpi.link{cursor:pointer}.kpi.link:hover{box-shadow:0 16px 40px rgba(124,92,255,.22),0 1px 0 rgba(255,255,255,.4) inset}
+.kpis>*{animation:fadeUp .45s ease both}
+.kpis>*:nth-child(2){animation-delay:.05s}.kpis>*:nth-child(3){animation-delay:.1s}.kpis>*:nth-child(4){animation-delay:.15s}
+.kpis>*:nth-child(5){animation-delay:.2s}.kpis>*:nth-child(6){animation-delay:.25s}.kpis>*:nth-child(7){animation-delay:.3s}
+.kpis>*:nth-child(8){animation-delay:.35s}.kpis>*:nth-child(9){animation-delay:.4s}.kpis>*:nth-child(10){animation-delay:.45s}
+@media (prefers-reduced-motion:reduce){body::before,.p-bad::before,.kpis>*{animation:none}}
+
+/* ---- table headers: heavier, different face, highlighted band ---- */
+th{font-family:"Segoe UI Variable","Segoe UI",var(--sans);font-weight:750;font-size:11.5px;letter-spacing:.07em;color:var(--ink);
+  background:linear-gradient(180deg,rgba(124,92,255,.20),rgba(20,184,166,.07)) , var(--glass-strong);
+  border-bottom:2px solid rgba(124,92,255,.5);padding:9px 10px}
+th:hover{color:var(--accent)}
+
+/* ---- scroll bars: wider, rounded, gradient thumb ---- */
+html{scrollbar-width:auto;scrollbar-color:rgba(124,92,255,.55) transparent}
+::-webkit-scrollbar{width:14px;height:14px}
+::-webkit-scrollbar-track{background:var(--glass);border-radius:10px}
+::-webkit-scrollbar-thumb{background:var(--grad);border-radius:10px;border:3px solid transparent;background-clip:padding-box;min-height:40px}
+::-webkit-scrollbar-thumb:hover{background:linear-gradient(135deg,#7c5cff,#14b8a6);background-clip:padding-box}
+::-webkit-scrollbar-corner{background:transparent}
+</style>
+</head>
+<body>
+<header>
+  <h1 id="h-name"></h1>
+  <div class="meta" id="h-meta"></div>
+  <div style="flex:1"></div>
+  <button class="btn" id="theme">Theme</button>
+</header>
+<nav id="nav"></nav>
+<main id="main"></main>
+<aside id="drawer"><div class="grip" id="d-grip" title="Drag to resize"></div><div class="hd"><h2 id="d-title"></h2><button class="x mx" id="d-max" title="Maximize / restore">Maximize</button><button class="x" id="d-close">Close</button></div><div class="bd" id="d-body"></div></aside>
+
+<script>
+const D = __DATA__;
+const M = D.model, SRC = D.src;
+const $ = (s, el = document) => el.querySelector(s);
+const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;"}[c]));
+const fmtN = v => v == null || v === "" ? "" : (typeof v === "number" ? v.toLocaleString() : esc(v));
+function fmtB(v){ if(v==null) return ""; const u=["B","KB","MB","GB","TB","PB"]; let i=0, x=+v; while(x>=1000&&i<u.length-1){x/=1000;i++} return (i?x.toFixed(x<10?2:1):x)+" "+u[i]; }
+function fmtDur(s){ if(s==null) return ""; s=+s; const d=Math.floor(s/86400), h=Math.floor(s%86400/3600), m=Math.floor(s%3600/60); return d?`${d}d ${h}h`:h?`${h}h ${m}m`:`${m}m`; }
+function fmtRate(m){ if(m==null) return ""; return m>=1000?(m/1000).toFixed(2)+" Gb/s":m>=1?m.toFixed(1)+" Mb/s":(m*1000).toFixed(0)+" kb/s"; }
+function pill(v){ const s=String(v??""); if(!s) return '<span class="muted">—</span>';
+  const c = /^(up|ok|alive|active|true|success|consistent|authorized)$/i.test(s)?"p-ok":/down|alarm|fail|false|dead|not-active/i.test(s)?"p-bad":/warn|link-up/i.test(s)?"p-warn":"p-info";
+  return `<span class="pill ${c}">${esc(s)}</span>`; }
+function sevPill(s){ return `<span class="pill ${s==="critical"?"p-bad":s==="warning"?"p-warn":"p-info"}">${s}</span>`; }
+const EXPLAIN = {
+  sap: {title: "Busiest SAPs: how it is calculated", html: `<p>Each bar is the average traffic of one SAP since its counters were last cleared:</p>
+    <p class="mono" style="padding:8px 10px;background:var(--glass);border-radius:8px">(received + transmitted octets) × 8 ÷ seconds since clear, shown in Mb/s</p>
+    <ul><li>Received: valid octets on the ingress forwarding engine (<span class="mono">received-valid-octets</span>).</li>
+    <li>Transmitted: aggregate forwarded octets on the egress traffic manager (<span class="mono">aggregate-forwarded-octets</span>).</li>
+    <li>Seconds since clear: from the SAP's <span class="mono">last-cleared-time</span> to the newest timestamp in the data, not to the current clock.</li></ul>
+    <p class="small muted">The counters only go up, so this is an average since the last clear, not the rate right now. Use the port bars for the recent 5-minute load.</p>`},
+  port: {title: "Busiest ports: how it is calculated", html: `<p>Each bar is the port's 5-minute utilisation as reported by the router: <span class="mono">in-utilization</span> and <span class="mono">out-utilization</span>, in hundredths of a percent. The bar shows the higher of the two.</p>
+    <p>Ports at 70% or more raise a capacity warning under Issues.</p>
+    <p class="small muted">The router calculates these values itself, so they reflect the last 5 minutes, not an average since the last clear.</p>`},
+  lsp: {title: "Where PCEP-reported LSPs leave: how it is calculated", html: `<p>Each bar counts the PCEP LSPs whose first ERO hop is that router interface. The first hop is the router's own outgoing link, so this shows where the LSPs leave the box.</p>
+    <p class="small muted">It uses the PCEP export. Without it, this card shows "PCEP export not loaded".</p>`},
+  health: {title: "Health score: how it is calculated", html: `<p>The score starts at 100. It loses 10 points for each critical finding and 2 points for each warning, using the newest stored run of every query.</p>
+    <p>Verdicts: 90 and above is Healthy, 70 to 89 needs attention, below 70 needs action.</p>
+    <p class="small muted">Findings for intentional admin shutdowns are not excluded yet, so the score can be lower than the real state.</p>`}
+};
+document.addEventListener("click", e => { const tb = e.target.closest("[data-tab]"); if (tb) { switchTab(tb.dataset.tab); window.scrollTo({top: 0, behavior: "smooth"}); } });
+function explain(key){ return ` <span class="chip link" data-explain="${key}">How is this calculated?</span>`; }
+document.addEventListener("click", e => { const x = e.target.closest("[data-explain]"); if (x){ e.stopPropagation(); const t = EXPLAIN[x.dataset.explain]; openDrawer(t.title, `<div class="explain">${t.html}</div>`); } });
+function chip(t, onclick){ return `<span class="chip${onclick?" link":""}" ${onclick?`data-go="${esc(onclick)}"`:""}>${esc(t)}</span>`; }
+function resolve(ref){ if(!ref) return null; let o = SRC[ref[0]]; for(const k of ref[1]){ if(o==null) return null; o = o[k]; } return o; }
+function flatten(o, p = "", out = []){ if(o && typeof o === "object"){ if(Array.isArray(o)) o.forEach((v,i)=>flatten(v,`${p}[${i}]`,out)); else for(const k in o) flatten(o[k], p?`${p}/${k}`:k, out);} else out.push([p,o]); return out; }
+
+/* ---------- lookups ---------- */
+const portById = Object.fromEntries(M.ports.map(p => [p.id, p]));
+const svcKey = s => `${s.type}:${s.id}`;
+const svcByKey = Object.fromEntries(M.services.map(s => [svcKey(s), s]));
+const sdpById = Object.fromEntries(M.sdps.map(s => [String(s.id), s]));
+const lspByName = Object.fromEntries(M.lsps.map(l => [l.name, l]));
+const custById = Object.fromEntries(M.customers.map(c => [String(c.id), c]));
+
+/* ---------- drawer ---------- */
+function kv(obj){ return `<dl class="kv">${Object.entries(obj).filter(([,v])=>v!==undefined&&v!==null&&v!=="").map(([k,v])=>`<dt>${esc(k)}</dt><dd>${v}</dd>`).join("")}</dl>`; }
+function rawSection(title, ref){
+  const o = resolve(ref); if(o==null) return "";
+  const rows = flatten(o); const id = "r"+Math.random().toString(36).slice(2);
+  return `<h3>${esc(title)} <span class="muted small">(${rows.length} fields, ${esc(ref[0])})</span></h3>
+  <div class="toolbar"><input placeholder="Filter fields" oninput="filterRaw('${id}',this.value)"></div>
+  <div class="tw" style="max-height:none"><table class="raw" id="${id}"><tbody>${rows.map(([k,v])=>`<tr><td class="mono muted">${esc(k)}</td><td class="mono">${esc(v)}</td></tr>`).join("")}</tbody></table></div>`;
+}
+window.filterRaw = (id, q) => { q=q.toLowerCase(); document.querySelectorAll(`#${id} tr`).forEach(tr => tr.style.display = tr.textContent.toLowerCase().includes(q) ? "" : "none"); };
+function openDrawer(title, html){ $("#d-title").textContent = title; $("#d-body").innerHTML = html; $("#drawer").classList.add("on"); $("#d-body").scrollTop = 0; }
+$("#d-close").onclick = () => $("#drawer").classList.remove("on");
+$("#d-max").onclick = () => { const d = $("#drawer"); d.style.width = ""; d.classList.toggle("max"); $("#d-max").textContent = d.classList.contains("max") ? "Restore" : "Maximize"; };
+(function(){
+  const d = $("#drawer"), grip = $("#d-grip"); let dragging = false;
+  grip.addEventListener("pointerdown", e => { dragging = true; grip.setPointerCapture(e.pointerId); e.preventDefault(); });
+  grip.addEventListener("pointermove", e => {
+    if(!dragging) return;
+    const w = Math.max(360, Math.min(window.innerWidth - e.clientX, window.innerWidth));
+    d.classList.remove("max"); $("#d-max").textContent = "Maximize"; d.style.width = w + "px";
+  });
+  grip.addEventListener("pointerup", () => { dragging = false; });
+})();
+document.addEventListener("keydown", e => { if(e.key==="Escape") $("#drawer").classList.remove("on"); });
+document.addEventListener("click", e => { const g = e.target.closest("[data-go]"); if(g){ e.stopPropagation(); go(g.dataset.go); } });
+function go(ref){ const [k, ...rest] = ref.split("|"); const v = rest.join("|");
+  if(k==="port" && portById[v]) showPort(portById[v]);
+  else if(k==="svc" && svcByKey[v]) showService(svcByKey[v]);
+  else if(k==="sdp" && sdpById[v]) showSdp(sdpById[v]);
+  else if(k==="lsp" && lspByName[v]) showLsp(lspByName[v]);
+  else if(k==="cust" && custById[v]) showCustomer(custById[v]);
+  else if(k==="trace" && svcByKey[v]){ switchTab("trace"); $("#trace-sel").value = v; renderTrace(); $("#drawer").classList.remove("on"); }
+  else if(k==="nbr"){ const n = M.neighbors.find(x=>x.name===v); if(n) showNeighbor(n); }
+}
+
+/* ---------- table ---------- */
+function table(el, cols, rows, onRow, opts = {}){
+  let sortK = opts.sort || null, dir = opts.dir || 1, q = "";
+  el.innerHTML = `<div class="toolbar"><input placeholder="Search ${opts.what||""}"><span class="count"></span>${opts.extra||""}</div><div class="tw"><table><thead><tr>${cols.map((c,i)=>`<th data-i="${i}" class="${c.num?"num":""}" title="${esc(c.tip||"")}">${esc(c.l)}</th>`).join("")}</tr></thead><tbody></tbody></table></div>`;
+  const tb = $("tbody", el), inp = $("input", el), cnt = $(".count", el);
+  const val = (r, c) => typeof c.v === "function" ? c.v(r) : r[c.k];
+  function draw(){
+    let rs = rows.filter(r => !q || cols.some(c => String(val(r,c) ?? "").toLowerCase().includes(q)) || (opts.searchExtra && opts.searchExtra(r).toLowerCase().includes(q)));
+    if(sortK != null){ const c = cols[sortK]; rs = rs.slice().sort((a,b)=>{ const x=val(a,c), y=val(b,c); return (typeof x==="number"&&typeof y==="number"? x-y : String(x??"").localeCompare(String(y??""), undefined, {numeric:true})) * dir; }); }
+    cnt.textContent = `${rs.length} of ${rows.length}`;
+    tb.innerHTML = rs.map((r,i)=>`<tr data-i="${rows.indexOf(r)}">${cols.map(c=>`<td class="${c.num?"num":""} ${c.cls||""}">${c.f?c.f(r):fmtN(val(r,c))}</td>`).join("")}</tr>`).join("");
+  }
+  inp.oninput = () => { q = inp.value.toLowerCase(); draw(); };
+  $("thead", el).onclick = e => { const th = e.target.closest("th"); if(!th) return; const i=+th.dataset.i; dir = sortK===i ? -dir : (cols[i].num?-1:1); sortK = i; draw(); };
+  tb.onclick = e => { if(e.target.closest("[data-go]")) return; const tr = e.target.closest("tr"); if(tr && onRow) onRow(rows[+tr.dataset.i]); };
+  draw();
+  return { setQuery(v){ inp.value=v; q=v.toLowerCase(); draw(); } };
+}
+
+/* ---------- detail views ---------- */
+function ddmTable(p){
+  const d = p.ddm; if(!Object.keys(d).length) return '<p class="muted">No optical diagnostics.</p>';
+  return `<div class="tw" style="max-height:none"><table><thead><tr><th>Metric</th><th class="num">Current</th><th class="num">Low alarm</th><th class="num">Low warn</th><th class="num">High warn</th><th class="num">High alarm</th><th class="num">Margin</th><th>Status</th></tr></thead><tbody>${
+    Object.values(d).map(m=>`<tr><td>${esc(m.label)} (${esc(m.unit)})</td><td class="num">${m.current}</td><td class="num">${m.lowAlarm??""}</td><td class="num">${m.lowWarning??""}</td><td class="num">${m.highWarning??""}</td><td class="num">${m.highAlarm??""}</td><td class="num">${m.margin??""}</td><td>${pill(m.status)}</td></tr>`).join("")}</tbody></table></div>`;
+}
+function sapRows(saps){ return `<div class="tw" style="max-height:none"><table><thead><tr><th>SAP</th><th>Service</th><th>Oper</th><th>Description</th><th class="num">Rx avg</th><th class="num">Tx avg</th><th class="num">Rx drops</th></tr></thead><tbody>${
+  saps.map(x=>`<tr><td class="mono">${chip(x.port,"port|"+x.port)}${esc(x.sapId.slice(x.port.length))}</td><td>${chip(`${x.serviceType} ${x.serviceId}`,`svc|${x.serviceType}:${x.serviceId}`)}</td><td>${pill(x.oper)}</td><td class="wrap">${esc(x.description)}</td><td class="num">${fmtRate(x.rxAvgMbps)}</td><td class="num">${fmtRate(x.txAvgMbps)}</td><td class="num">${fmtN(x.rxDropPkts)}</td></tr>`).join("")}</tbody></table></div>`; }
+
+function showPort(p){
+  const o = p.optic || {};
+  const saps = M.saps.filter(x => x.port === p.id);
+  let h = kv({"Port": `<span class="mono">${esc(p.id)}</span>`, "Oper / port state": `${pill(p.oper)} ${pill(p.portState)} <span class="muted">previous: ${esc(p.prevState)}</span>`,
+    "Type / class": `${esc(p.type)} · ${esc(p.class)}`, "Speed / duplex": p.speedMbps?`${fmtN(p.speedMbps)} Mb/s · ${esc(p.duplex)}`:"", "MDI": esc(p.mdi),
+    "MAC": `<span class="mono">${esc(p.mac)}</span>`, "Protocols": esc(p.protocols), "LAG": p.lag?`${esc(p.lag)} <span class="muted small">(inferred from counters)</span>`:"",
+    "LAG members": p.members?`${p.members.map(m=>chip(m,"port|"+m)).join("")} <span class="muted small">(inferred, counter match error ${p.lagMatchErrorPct}%)</span>`:"",
+    "Oper-state changes": fmtN(p.flaps), "Current alarms": esc(p.alarms), "Down reason": esc(p.downReason),
+    "Dampening / loop": `${esc(p.dampening)} · ${esc(p.loop)}`, "EFM-OAM": esc(p.efmOam), "802.1X": esc(p.dot1x), "SSM received": esc(p.ssmRx)});
+  h += `<h3>Traffic and errors</h3>` + kv({"5-min utilisation": `in ${p.inUtilPct}% · out ${p.outUtilPct}%`, "Octets in / out": `${fmtB(p.inOctets)} / ${fmtB(p.outOctets)}`,
+    "Packets in / out": `${fmtN(p.inPkts)} / ${fmtN(p.outPkts)}`, "Broadcast / multicast": `${fmtN(p.bcast)} / ${fmtN(p.mcast)}`,
+    "Errors in / out": `${fmtN(p.inErrors)} / ${fmtN(p.outErrors)}`, "CRC / FCS / symbol": `${fmtN(p.crc)} / ${fmtN(p.fcs)} / ${fmtN(p.symbolErrors)}`,
+    "Frame too long / oversize / undersize": `${fmtN(p.frameTooLong)} / ${fmtN(p.oversize)} / ${fmtN(p.undersize)}`,
+    "Discards in / out": `${fmtN(p.inDiscards)} / ${fmtN(p.outDiscards)}`, "Counters since": esc(p.counterSince || "not reported")});
+  const ps = p.pktSizes || {}; if(Object.keys(ps).length){ const tot = Object.values(ps).reduce((a,b)=>a+(+b||0),0)||1;
+    h += `<h3>Packet size distribution</h3><div class="tw" style="max-height:none"><table><tbody>${Object.entries(ps).map(([k,v])=>`<tr><td>${esc(k.replace("octets-",""))} B</td><td class="num">${fmtN(v)}</td><td style="width:50%"><div class="bar"><i style="width:${(v/tot*100).toFixed(1)}%"></i></div></td><td class="num">${(v/tot*100).toFixed(1)}%</td></tr>`).join("")}</tbody></table></div>`; }
+  if(o.equipped !== undefined){ h += `<h3>Transceiver</h3>` + kv({"Equipped": pill(String(o.equipped)), "Type / connector": `${esc(o.type)} · ${esc(o.connector)} (${esc(o.connectorCode)})`,
+    "Part number": esc(o.vendorPart), "Model": esc(o.model), "Serial": `<span class="mono">${esc(o.serial)}</span>`, "Vendor OUI": esc(o.vendorOui),
+    "Wavelength": o.wavelengthNm?`${o.wavelengthNm} nm`:"", "Manufactured": o.mfgDate?`${esc(o.mfgDate.slice(0,10))} (${o.ageYears} years)`:"",
+    "Diagnostics": `${esc(o.diag)} · calibrated ${esc(o.calibrated)}`, "Failed thresholds": esc(o.failedThresholds), "Compliance / link length": `<span class="mono">${esc(o.compliance)} · ${esc(o.linkLength)}</span>`});
+    h += ddmTable(p); }
+  const e = p.elmi; h += `<h3>ELMI handoff label</h3>` + kv({"UNI identifier": `<span class="mono">${esc(e.uniId)}</span>`, "UNI type": esc(e.uniType), "Link status": pill(e.linkStatus),
+    "Site codes found": e.siteCodes.map(c=>chip(c)).join(""), "Circuit IDs found": e.circuits.map(c=>chip(c)).join("")});
+  if(e.evcs.length) h += `<div class="tw" style="max-height:none"><table><thead><tr><th>VLAN</th><th>EVC identifier</th><th>Type</th><th>Status</th><th>Since</th></tr></thead><tbody>${e.evcs.map(v=>`<tr><td>${v.vlan}</td><td class="wrap">${esc(v.identifier)}</td><td>${esc(v.type)}</td><td>${pill(v.status)}</td><td>${esc(v.statusTime)}</td></tr>`).join("")}</tbody></table></div>`;
+  h += `<h3>LLDP neighbours (${p.neighbors.length})</h3>`;
+  h += p.neighbors.length ? p.neighbors.map(nb=>kv({"System": chip(nb.systemName||nb.chassisId, "nbr|"+(nb.systemName||nb.chassisId)), "Description": esc(nb.systemDescription),
+    "Remote port": `${esc(nb.remotePortId)} <span class="muted">(${esc(nb.remotePortIdSubtype)})</span>`, "Remote port description": esc(nb.portDescription),
+    "Chassis ID": `<span class="mono">${esc(nb.chassisId)}</span> (${esc(nb.chassisIdSubtype)})`, "Capabilities": `${esc(nb.capabilities)} / supported ${esc(nb.supportedCapabilities)}`,
+    "Mgmt addresses": nb.mgmtAddresses.map(a=>chip(a)).join(""), "Age": fmtDur(nb.ageSec), "Frames rx / age-outs": `${fmtN(nb.rxFrames)} / ${fmtN(nb.ageOuts)}`, "MAC type": esc(nb.macType)})).join("<hr style='border:0;border-top:1px solid var(--line)'>") : '<p class="muted">None learned.</p>';
+  if(p.netQueues.length){ h += `<h3>Network queues</h3><div class="tw" style="max-height:none"><table><thead><tr><th>Dir</th><th>Queue</th><th class="num">Forwarded pkts</th><th class="num">Forwarded</th><th class="num">Dropped pkts</th></tr></thead><tbody>${p.netQueues.map(q=>`<tr><td>${q.dir}</td><td>${q.queue}</td><td class="num">${fmtN(q.fwdPkts)}</td><td class="num">${fmtB(q.fwdOctets)}</td><td class="num">${fmtN(q.dropPkts)}</td></tr>`).join("")}</tbody></table></div>`; }
+  h += `<h3>Services on this port (${saps.length} SAPs)</h3>` + (saps.length ? sapRows(saps) : '<p class="muted">No SAPs.</p>');
+  h += rawSection("All fields: port state", p.src);
+  openDrawer(`Port ${p.id}`, h);
+}
+
+function bindTable(binds){ return `<div class="tw" style="max-height:none"><table><thead><tr><th>Binding</th><th>Kind</th><th>Oper</th><th>Far end</th><th>LSP</th><th class="num">In</th><th class="num">Out</th><th class="num">In drops</th><th>Labels in/out</th><th>Origin</th></tr></thead><tbody>${
+  binds.map(b=>{ const s=sdpById[String(b.sdpId)]; return `<tr><td class="mono">${chip(b.bindId,"sdp|"+b.sdpId)}</td><td>${esc(b.kind)}</td><td>${pill(b.oper)}</td><td>${esc(s?.farEndName||"")} <span class="muted mono">${esc(s?.farEnd||"")}</span></td><td>${s?.lspName?chip(s.lspName,"lsp|"+s.lspName)+pill(s.lspOper):""}</td><td class="num">${fmtB(b.inOctets)}</td><td class="num">${fmtB(b.outOctets)}</td><td class="num">${fmtN(b.inDrop)}</td><td class="mono">${esc(b.ingLabel)}/${esc(b.egLabel)}</td><td>${esc(b.origin)}</td></tr>`; }).join("")}</tbody></table></div>`; }
+
+function macTable(rows){ return `<div class="tw" style="max-height:none"><table><thead><tr><th>MAC</th><th>Source</th><th>Transport</th><th>Type</th><th class="num">Age (s)</th><th>Last change</th></tr></thead><tbody>${
+  rows.map(r=>`<tr><td class="mono">${esc(r.mac)}</td><td class="mono">${esc(r.source)}</td><td>${esc(r.transport)}</td><td>${esc(r.entry_type)}</td><td class="num">${esc(r.age_seconds)}</td><td>${esc(r.last_change)}</td></tr>`).join("")}</tbody></table></div>`; }
+
+function showService(s){
+  const c = custById[String(s.customer)];
+  let h = `<p>${chip("Open end-to-end trace","trace|"+svcKey(s))}</p>` + kv({"Type / ID": `${esc(s.type)} ${esc(s.id)}`, "Name": esc(s.name), "Description": esc(s.description),
+    "Customer": c?`${chip(c.id,"cust|"+c.id)} ${esc(c.description)} ${c.contact?`<span class="muted">· ${esc(c.contact)} ${esc(c.phone)}</span>`:""}`:esc(s.customer),
+    "Oper / admin": `${pill(s.oper)} ${s.adminShutdown?'<span class="pill p-bad">admin shutdown</span>':'<span class="muted">admin enabled</span>'}`,
+    "Service MTU": esc(s.mtu), "SAPs / SDP bindings": `${s.sapCount} / ${s.sdpBindCount}`, "Origin": esc(s.origin),
+    "RD / RT": [s.rd, s.rtImport, s.rtExport, s.vrfTarget].filter(Boolean).map(esc).join(" · "), "Oper RD / RT": [s.operRd, s.operRtImport, s.operRtExport].filter(Boolean).map(esc).join(" · "),
+    "AS number": esc(s.asn), "BGP-AD VPLS-ID": esc(s.vplsId), "BGP-AD VSI prefix": esc(s.vsiId), "BGP-AD": s.bgpAdShutdown==null?"":pill(s.bgpAdShutdown?"shutdown":"enabled"),
+    "PW template": s.pwTemplate!=null?`${esc(s.pwTemplate)} ${s.pwSplitHorizon?"· split-horizon "+esc(s.pwSplitHorizon):""}`:"",
+    "Auto-bind tunnel": Object.entries(s.autoBind||{}).filter(([,v])=>v).map(([k])=>k).join(", "),
+    "STP": s.stpShutdown==null?"":(s.stpShutdown?"shutdown":"enabled"), "MAC move": s.macMove==null?"":(s.macMove?"shutdown":"enabled"),
+    "FDB": s.type==="vpls"?`${fmtN(s.macsInUse)} in use · ${fmtN(s.macsLearned)} learned · ${fmtN(s.macsStatic)} static${s.fdbTableSize?" · table "+s.fdbTableSize:""}`:"",
+    "Send flush on failure": s.sendFlush?"yes":"", "L2PT termination": esc(s.l2ptTerm), "Allow IP interface bind": s.allowIpIntBind?"yes":"",
+    "Routed by (r-VPLS)": (s.routedBy||[]).map(r=>`${chip("vprn "+r.vprn,"svc|vprn:"+r.vprn)} ${esc(r.interface)} ${esc(r.address)}`).join("<br>"),
+    "Site codes / circuits in name": [...s.siteCodes, ...s.circuits].map(x=>chip(x)).join(""),
+    "Traffic (avg since clear)": `rx ${fmtRate(s.rxAvgMbps)} · tx ${fmtRate(s.txAvgMbps)} · totals ${fmtB(s.rxOctets)} / ${fmtB(s.txOctets)}`, "SAP ingress drops": fmtN(s.rxDropPkts)});
+  if(s.interfaces.length) h += `<h3>VPRN interfaces</h3><div class="tw" style="max-height:none"><table><thead><tr><th>Name</th><th>Address</th><th>Bound VPLS</th><th>DHCP relay</th><th>Description</th></tr></thead><tbody>${s.interfaces.map(i=>`<tr><td>${esc(i.name)}</td><td class="mono">${esc(i.address)}</td><td>${esc(i.vplsBinding)}</td><td>${esc(i.dhcpServer||"")}${i.dhcpTrusted?" (trusted)":""}</td><td>${esc(i.description)}</td></tr>`).join("")}</tbody></table></div>`;
+  h += `<h3>SAPs (${s.saps.length})</h3>` + (s.saps.length?sapRows(s.saps):'<p class="muted">None.</p>');
+  h += `<h3>SDP bindings (${s.binds.length})</h3>` + (s.binds.length?bindTable(s.binds):'<p class="muted">None.</p>');
+  if(s.macRows) h += `<h3>MAC table (${s.macRows.length} entries from CLI "service fdb-mac")</h3>` + (s.macRows.length?macTable(s.macRows):'<p class="muted">No MAC entries.</p>');
+  for(const x of s.saps){ h += rawSection(`SAP ${x.sapId}: state fields`, x.src); h += rawSection(`SAP ${x.sapId}: config fields`, x.srcCfg); }
+  h += rawSection("All fields: service state", s.src) + rawSection("All fields: service config", s.srcCfg);
+  openDrawer(`${s.type.toUpperCase()} ${s.id} · ${s.name}`, h);
+}
+function showSdp(s){
+  const l = lspByName[s.lspName];
+  let h = kv({"SDP": esc(s.id), "Description": esc(s.description), "Oper / admin": `${pill(s.oper)} ${s.adminShutdown?'<span class="pill p-bad">admin shutdown</span>':""}`,
+    "Far end": `${esc(s.farEndName)} <span class="mono">${esc(s.farEnd)}</span>`, "Delivery / active LSP type": `${esc(s.delivery)} · ${esc(s.activeLspType)}`,
+    "LSP": s.lspName?chip(s.lspName,"lsp|"+s.lspName)+" "+pill(s.lspOper):"", "Path MTU (cfg / oper)": `${esc(s.pathMtu)} / ${esc(s.operMtu)}`,
+    "Keep-alive": `${pill(s.kaOper)} · ${fmtN(s.helloReq)} sent · ${fmtN(s.helloResp)} answered · ${fmtN(s.helloLost)} lost · ${fmtN(s.helloLate)} late`,
+    "Flags": esc(s.flags), "Bandwidth oper / available": `${esc(s.operBw)} / ${esc(s.availBw)}`, "Net-domain": esc(s.netDomain), "Origin": esc(s.origin)});
+  h += `<h3>Services bound (${s.bindings.length})</h3>` + (s.bindings.length ? `<div class="tw" style="max-height:none"><table><thead><tr><th>Service</th><th>Name</th><th>Kind</th><th>VC</th><th>Oper</th></tr></thead><tbody>${s.bindings.map(b=>`<tr><td>${chip(`${b.serviceType} ${b.serviceId}`,`svc|${b.serviceType}:${b.serviceId}`)}</td><td>${esc(b.serviceName)}</td><td>${esc(b.kind)}</td><td>${esc(b.vcId)}</td><td>${pill(b.oper)}</td></tr>`).join("")}</tbody></table></div>` : '<p class="muted">None.</p>');
+  if(l) h += `<h3>Path</h3>` + eroHtml(l);
+  h += rawSection("All fields: SDP state", s.src) + rawSection("All fields: SDP config", s.srcCfg);
+  openDrawer(`SDP ${s.id}`, h);
+}
+function eroHtml(l){ return l.ero.length ? `<div>${l.ero.map((h,i)=>`<span class="hop"><b>${esc(h.name||"?")}</b><span class="mono">${esc(h.ip)}</span></span>${i<l.ero.length-1?"→":""}`).join("")}</div>` : '<p class="muted">No ERO in the PCEP export.</p>'; }
+function showLsp(l){
+  const sd = M.sdps.filter(s => s.lspName === l.name);
+  let h = kv({"LSP": esc(l.name), "Far end": esc(l.farEndName), "Oper": pill(l.oper), "From": `<span class="mono">${esc(l.from)}</span>`,
+    "Metric / MTU": `${esc(l.metric)} / ${esc(l.mtu)}`, "Up for": fmtDur(l.upSec), "Age": fmtDur(l.ageSec), "Down time": fmtDur(l.downSec),
+    "Transitions / path changes": `${fmtN(l.transitions)} / ${fmtN(l.pathChanges)} (last ${fmtDur(l.lastTransitionSec)} ago)`,
+    "Paths cfg / standby / oper": `${esc(l.paths.configured)} / ${esc(l.paths.standby)} / ${esc(l.paths.operational)}`,
+    "Primary path": `${esc(l.pathName)} ${pill(l.pathOper)} ${pill(l.pathState)}`, "Fail code / node": `${esc(l.failCode)} · ${esc(l.failNode)}`,
+    "Properties": esc(l.properties), "FRR / node protect": `${esc(l.frr)} / ${esc(l.nodeProtect)}`, "Setup / hold priority": `${esc(l.setupPri)} / ${esc(l.holdPri)}`,
+    "CSPF / queries": `${esc(l.cspf)} · ${fmtN(l.cspfQueries)}`, "Bandwidth": esc(l.bandwidth), "Hop limit": esc(l.hopLimit), "Entropy label": esc(l.entropy),
+    "Last resignal attempt": esc(l.lastResignal), "Last MBB": l.mbbType?`${esc(l.mbbType)} · ${esc(l.mbbState)} · metric ${esc(l.mbbMetric)} · ${esc(l.mbbEnd)}`:"",
+    "Retries / path transitions": `${fmtN(l.retries)} / ${fmtN(l.pathTransitions)}`, "Tunnel / LSP index": `${esc(l.tunnelId)} / ${esc(l.lspIndex)}`, "LSP ID": `<span class="mono">${esc(l.lspId)}</span>`,
+    "Egress": l.egressInterface?`${esc(l.egressInterface)} ${l.egressLag?chip(l.egressLag,"port|"+l.egressLag):""}`:"",
+    "PCEP": l.pcep?`plsp ${esc(l.pcep.plsp)} · ${pill(l.pcep.oper)} · ${esc(l.pcep.hops)} hops · endpoint ${esc(l.pcep.endpoint)}`:'<span class="muted">not in PCEP export</span>',
+    "Services riding": `${l.serviceCount} via SDP ${l.sdps.map(x=>chip(x,"sdp|"+x)).join("")}`});
+  h += `<h3>ERO from PCEP</h3>` + eroHtml(l);
+  const svcs = sd.flatMap(s=>s.bindings); if(svcs.length) h += `<h3>Services that depend on this LSP</h3>` + svcs.map(b=>chip(`${b.serviceType} ${b.serviceId} ${b.serviceName}`,`svc|${b.serviceType}:${b.serviceId}`)).join(" ");
+  h += rawSection("All fields: LSP state", l.src);
+  openDrawer(`LSP ${l.name}`, h);
+}
+function showCustomer(c){
+  let h = kv({"Customer ID": esc(c.id), "Name": esc(c.name), "Description": esc(c.description), "Contact": esc(c.contact), "Phone": esc(c.phone)});
+  const ss = c.services.map(k=>svcByKey[k]).filter(Boolean);
+  h += `<h3>Services (${ss.length})</h3>` + ss.map(s=>`<div>${chip(`${s.type} ${s.id}`,"svc|"+svcKey(s))} ${esc(s.name)} ${pill(s.oper)}</div>`).join("");
+  h += rawSection("All fields: customer config", c.src);
+  openDrawer(`Customer ${c.id}`, h);
+}
+function showNeighbor(nb){
+  let h = kv({"Name": esc(nb.name), "Kind": esc(nb.kind), "Release": esc(nb.release), "Description": esc(nb.description), "Chassis": `<span class="mono">${esc(nb.chassis)}</span>`,
+    "Capabilities": esc(nb.capabilities), "Mgmt addresses": nb.mgmt.map(a=>chip(a)).join("")});
+  h += `<h3>Links (${nb.links.length})</h3><div class="tw" style="max-height:none"><table><thead><tr><th>Local port</th><th>LAG</th><th>Oper</th><th class="num">Speed</th><th>Remote port</th><th>Remote description</th></tr></thead><tbody>${nb.links.map(k=>`<tr><td>${chip(k.localPort,"port|"+k.localPort)}</td><td>${k.lag?chip(k.lag,"port|"+k.lag):""}</td><td>${pill(k.oper)}</td><td class="num">${fmtN(k.speedMbps)}</td><td class="mono">${esc(k.remotePort)}</td><td class="wrap">${esc(k.remoteDesc)}</td></tr>`).join("")}</tbody></table></div>`;
+  openDrawer(`Neighbour ${nb.name}`, h);
+}
+
+/* ---------- tabs ---------- */
+const TABS = [
+  ["overview","Overview"],["issues","Issues",M.issues.filter(i=>i.sev!=="info").length],["ports","Ports",M.ports.length],["optics","Optics"],
+  ["links","Neighbours & LAGs",M.neighbors.length],["interfaces","IP interfaces",M.interfaces.length],["services","Services",M.services.length],
+  ["saps","SAPs",M.saps.length],["sdps","SDPs",M.sdps.length],["lsps","LSPs",M.lsps.length],["trace","Service trace"],
+  ["customers","Customers",M.customers.length],["pwt","PW templates",M.pwTemplates.length],
+  ["live","Live findings",M.live.findings.filter(f=>f.severity!=="info").length],["health","Hardware & system"],["routing","Routing & protocols"],
+  ["fdb","MAC table",(M.live.fdb||{}).total||0],["queries","Query status",M.live.queries.length],["chassis","Chassis layout"],["raw","All raw data"]];
+$("#nav").innerHTML = TABS.map(([k,l,c])=>`<button data-t="${k}">${l}${c!=null?`<span class="ct">${c}</span>`:""}</button>`).join("");
+$("#main").innerHTML = TABS.map(([k])=>`<section class="tab" id="t-${k}"></section>`).join("");
+const rendered = {};
+function switchTab(k){ document.querySelectorAll("nav button").forEach(b=>b.classList.toggle("on", b.dataset.t===k)); document.querySelectorAll("section.tab").forEach(s=>s.classList.toggle("on", s.id==="t-"+k));
+  if(!rendered[k]){ rendered[k]=1; R[k]($("#t-"+k)); } try{ localStorage.setItem("devrep-tab", k); }catch(e){} }
+$("#nav").onclick = e => { const b = e.target.closest("button"); if(b) switchTab(b.dataset.t); };
+
+const dev = M.device;
+$("#h-name").textContent = dev.name;
+$("#h-meta").innerHTML = `System <b class="mono">${esc(dev.systemIp)}</b> · OOB <b class="mono">${esc(dev.oobIp)}</b> · Nokia 7750 SR, classic config mode · Data as of <b>${esc(dev.asOf)}</b> · SAP counters since ${esc((dev.counterClear||"").slice(0,10))}`;
+
+function barSvg(items, w = 520){ const max = Math.max(...items.map(i=>i.v), 1), rh = 34, lw = 250, bh = 22;
+  return `<svg viewBox="0 0 ${w} ${items.length*rh+8}" width="100%" role="img" style="font-size:15px">${items.map((it,i)=>`<g transform="translate(0,${i*rh+4})"${it.ref?` data-go="${esc(it.ref)}" style="cursor:pointer"`:""}><text x="${lw-10}" y="${bh-4}" text-anchor="end" font-size="14" font-weight="600">${esc(it.l.length>44?it.l.slice(0,43)+"…":it.l)}</text><rect x="${lw}" y="2" height="${bh}" rx="6" width="${Math.max((w-lw-110)*it.v/max,2)}" fill="${it.c||"var(--accent)"}" style="filter:drop-shadow(0 0 4px ${it.c||"rgba(124,92,255,.5)"})"></rect><text x="${lw+Math.max((w-lw-110)*it.v/max,2)+8}" y="${bh-4}" font-size="14" font-weight="700">${esc(it.t)}</text></g>`).join("")}</svg>`; }
+
+const R = {};
+R.overview = el => {
+  const phys = M.ports.filter(p=>!p.id.startsWith("lag-"));
+  const up = phys.filter(p=>p.oper==="up").length, svAll = M.services, sv = svAll.filter(s=>s.oper), svUp = sv.filter(s=>s.oper==="up").length, noState = svAll.length - sv.length;
+  const sapUp = M.saps.filter(s=>s.oper==="up").length, sdpUp = M.sdps.filter(s=>s.oper==="up").length, lspUp = M.lsps.filter(l=>l.oper==="up").length;
+  const crit = M.issues.filter(i=>i.sev==="critical").length, warn = M.issues.filter(i=>i.sev==="warning").length;
+  const optAl = phys.filter(p=>p.ddmWorst==="alarm").length, optW = phys.filter(p=>p.ddmWorst==="warning").length;
+  const KPI_TAB = {"Ports up":"ports","Services up (with state)":"services","SAPs up":"saps","SDPs up":"sdps",
+    "RSVP LSPs up":"lsps","Customers":"customers","LLDP neighbours":"links","Optics out of range":"optics",
+    "Critical findings":"issues","Warnings":"issues"};
+  const k = (v,l,s,c) => `<div class="card kpi${KPI_TAB[l]?" link":""}" ${KPI_TAB[l]?`data-tab="${KPI_TAB[l]}" title="Open ${esc(l)}"`:""}><div class="v" ${c?`style="color:var(--${c})"`:""}>${v}</div><div class="l">${l}</div>${s?`<div class="s muted">${s}</div>`:""}</div>`;
+  const byType = t => svAll.filter(s=>s.type===t).length;
+  let h = `<h2>${esc(dev.name)} at a glance</h2><p class="lead">${up} of ${phys.length} physical ports are up and ${svUp} of ${sv.length} services with state data are up${noState?` (${noState} VPRN have config only; their state was not collected)`:""}. ${crit} critical and ${warn} warning findings are listed under Issues. Click any row in any tab for its full detail, including every raw field returned by the device.</p>`;
+  // Health score: 100 minus 10 per critical and 2 per warning in the latest stored runs.
+  const hc = LV.findings.filter(f=>f.severity==="critical").length, hw = LV.findings.filter(f=>f.severity==="warning").length;
+  const score = Math.max(0, Math.min(100, 100 - hc*10 - hw*2)), ringLen = 2*Math.PI*52;
+  const scol = score>=90 ? "var(--ok)" : score>=70 ? "var(--warn)" : "var(--bad)";
+  const verdict = score>=90 ? "Healthy" : score>=70 ? "Needs attention" : "Action needed";
+  h += `<div class="card" style="display:flex;gap:20px;align-items:center;margin-bottom:12px;flex-wrap:wrap">
+    <svg width="132" height="132" viewBox="0 0 128 128" role="img" aria-label="Health score ${score}">
+      <circle cx="64" cy="64" r="52" fill="none" stroke="var(--line)" stroke-width="12"/>
+      <circle cx="64" cy="64" r="52" fill="none" stroke="${scol}" stroke-width="12" stroke-linecap="round"
+        stroke-dasharray="${(ringLen*score/100).toFixed(1)} ${ringLen.toFixed(1)}" transform="rotate(-90 64 64)"
+        style="filter:drop-shadow(0 0 6px ${scol})"/>
+      <text x="64" y="72" text-anchor="middle" font-size="30" font-weight="700">${score}</text>
+    </svg>
+    <div style="min-width:240px;flex:1">
+      <div class="small muted" style="text-transform:uppercase;letter-spacing:.06em">Health score</div>
+      <div style="font-size:20px;font-weight:650;color:${scol}">${verdict}</div>
+      <div class="small muted" style="margin-top:4px">From ${hc} critical and ${hw} warning findings in the latest runs. Each critical costs 10 points, each warning 2.</div>
+    </div></div>`;
+  h += `<div class="grid kpis">${k(`${up}/${phys.length}`,"Ports up",`${M.ports.length-phys.length} LAGs`)}${k(`${svUp}/${sv.length}`,"Services up (with state)",`${byType("epipe")} epipe · ${byType("vpls")} VPLS · ${byType("vprn")} VPRN`, svUp<sv.length?"bad":"")}${k(`${sapUp}/${M.saps.length}`,"SAPs up","",sapUp<M.saps.length?"bad":"")}${k(`${sdpUp}/${M.sdps.length}`,"SDPs up","",sdpUp<M.sdps.length?"bad":"")}${k(`${lspUp}/${M.lsps.length}`,"RSVP LSPs up",M.pcepLoaded?`${M.lsps.filter(l=>l.pcep).length} matched to PCEP`:"PCEP export not loaded",lspUp<M.lsps.length?"bad":"")}${k(M.customers.length,"Customers")}${k(M.neighbors.length,"LLDP neighbours")}${k(optAl+optW,"Optics out of range",`${optAl} alarm · ${optW} warning`,optAl?"bad":"")}${k(crit,"Critical findings","",crit?"bad":"ok")}${k(warn,"Warnings","",warn?"warn":"ok")}</div>`;
+  h += `<div class="grid two" style="margin-top:12px"><div class="card"><h3 style="margin-top:0">Topology from LLDP</h3><div id="topo"></div><div class="legend"><span><i style="background:var(--accent)"></i>Nokia 7750 core</span><span><i style="background:var(--warn)"></i>Access / NID</span><span><i style="background:var(--bad)"></i>link down</span></div></div>`;
+  const topSap = M.saps.slice().sort((a,b)=>(b.rxAvgMbps+b.txAvgMbps)-(a.rxAvgMbps+a.txAvgMbps)).slice(0,12);
+  h += `<div class="card"><h3 style="margin-top:0">Busiest SAPs, average rx + tx since counters cleared${explain("sap")}</h3>${barSvg(topSap.map(x=>({l:`${x.sapId} ${x.serviceName}`,v:(x.rxAvgMbps||0)+(x.txAvgMbps||0),t:fmtRate((x.rxAvgMbps||0)+(x.txAvgMbps||0)),ref:`svc|${x.serviceType}:${x.serviceId}`})))}</div></div>`;
+  const eg = Object.entries(dev.egressSummary||{}).sort((a,b)=>b[1]-a[1]);
+  h += `<div class="grid two" style="margin-top:12px"><div class="card"><h3 style="margin-top:0">Where PCEP-reported LSPs leave this router${explain("lsp")}</h3>${eg.length?barSvg(eg.map(([k,v])=>{ const i=M.interfaces.find(x=>x.name===k); return {l:`${k.replace(/^A7\w+?-A7/,"to ")} (${i?.neighborLag||"?"})`,v,t:`${v} LSPs`}; })):'<p class="muted">PCEP export not loaded.</p>'}<p class="small muted">First ERO hop matched to the local interface address.</p></div>`;
+  const util = phys.filter(p=>p.oper==="up").map(p=>({l:`${p.id} ${p.neighbors[0]?.systemName||p.elmi.siteCodes[0]||""}`,v:Math.max(p.inUtilPct,p.outUtilPct),t:`${Math.max(p.inUtilPct,p.outUtilPct).toFixed(2)}%`,ref:`port|${p.id}`})).sort((a,b)=>b.v-a.v).slice(0,12);
+  h += `<div class="card"><h3 style="margin-top:0">Busiest ports, 5-minute utilisation (higher of in/out)${explain("port")}</h3>${barSvg(util)}</div></div>`;
+  const lf = LV.findings, lcrit = lf.filter(f=>f.severity==="critical").length, lwarn = lf.filter(f=>f.severity==="warning").length;
+  const lcauses = [...new Set(lf.filter(f=>f.cause).map(f=>f.cause))];
+  h += `<div class="card" style="margin-top:12px"><h3 style="margin-top:0">Stored runs: ${LV.queries.filter(q=>q.status==="ok").length} of ${LV.queries.length} queries have data</h3>
+    <p>${lcrit} critical and ${lwarn} warning findings from the latest runs. ${lcauses.length ? "Root causes: " + lcauses.map(c => { const p = (lf.find(f=>f.cause===c).refs||[]).find(r=>r.ref.startsWith("port|")); return p ? chip(c, p.ref) : esc(c); }).join(" ") : "No root causes identified."}</p>
+    <p class="small muted">See Live findings, Hardware & system, Routing & protocols and Query status in the tabs above.</p></div>`;
+  h += `<h3>Data sources</h3><div class="tw" style="max-height:none"><table><thead><tr><th>Source</th><th>File</th><th>Status</th><th class="num">Fields</th><th class="num">Size</th><th>Saved</th></tr></thead><tbody>${M.sources.map(s=>`<tr><td>${esc(s.label)}</td><td class="mono">${esc(s.file||"")}</td><td>${pill(s.status)}</td><td class="num">${fmtN(s.leaves)}</td><td class="num">${fmtB(s.bytes)}</td><td>${esc(s.saved||"")}</td></tr>`).join("")}<tr><td>PCEP LSP export</td><td class="mono">pce-lsp-inventory.csv</td><td>${pill(M.pcepLoaded?"ok":"missing")}</td><td></td><td></td><td></td></tr></tbody></table></div>`;
+  h += `<p class="foot">Inferred values are labelled: LAG membership comes from member counters summing to LAG totals, interface-to-port mapping from interface names plus LLDP chassis MAC prefixes, and ERO hop names from the PCEP export. Average rates are octets divided by time since counters were last cleared.</p>`;
+  el.innerHTML = h; drawTopo($("#topo", el));
+};
+function drawTopo(el){
+  const core = M.neighbors.filter(n=>n.kind==="Nokia 7750 SR"), edge = M.neighbors.filter(n=>n.kind!=="Nokia 7750 SR");
+  const W = 640, H = 420, cx = W/2, cy = 205;
+  const place = (arr, a0, a1, r) => arr.map((n,i)=>{ const a = arr.length===1?(a0+a1)/2:a0+(a1-a0)*i/(arr.length-1); return {n, x: cx + r*Math.cos(a), y: cy + r*Math.sin(a)}; });
+  const pts = [...place(core, -Math.PI*0.85, -Math.PI*0.15, 165), ...place(edge, Math.PI*0.08, Math.PI*0.92, 175)];
+  let s = `<svg viewBox="0 0 ${W} ${H}" width="100%" role="img" aria-label="LLDP topology">`;
+  for(const p of pts){ const down = p.n.links.every(k=>k.oper!=="up"); const lbl = [...new Set(p.n.links.map(k=>k.lag||k.localPort))].join(", ");
+    s += `<line x1="${cx}" y1="${cy}" x2="${p.x}" y2="${p.y}" stroke="${down?"var(--bad)":"var(--line)"}" stroke-width="${p.n.kind==="Nokia 7750 SR"?3:1.5}"/>`;
+    const mx = cx+(p.x-cx)*0.55, my = cy+(p.y-cy)*0.55; s += `<text x="${mx}" y="${my}" font-size="10" text-anchor="middle" style="fill:var(--muted)">${esc(lbl)}</text>`; }
+  s += `<rect x="${cx-70}" y="${cy-18}" width="140" height="36" rx="6" fill="var(--accent-soft)" stroke="var(--accent)"/><text x="${cx}" y="${cy+5}" text-anchor="middle" font-size="13" font-weight="700">${esc(dev.name)}</text>`;
+  for(const p of pts){ const c = p.n.kind==="Nokia 7750 SR"?"var(--accent)":"var(--warn)";
+    s += `<g data-go="nbr|${esc(p.n.name)}" style="cursor:pointer"><circle cx="${p.x}" cy="${p.y}" r="7" fill="${c}"/><text x="${p.x}" y="${p.y + (p.y<cy?-12:20)}" text-anchor="middle" font-size="11" font-weight="600">${esc(p.n.name)}</text><text x="${p.x}" y="${p.y + (p.y<cy?-24:32)}" text-anchor="middle" font-size="9" style="fill:var(--muted)">${esc(p.n.kind)}</text></g>`; }
+  el.innerHTML = s + "</svg>";
+}
+R.issues = el => {
+  el.innerHTML = `<h2>Issues and findings</h2><p class="lead">Each finding is derived from the device data. Critical means something carrying or meant to carry traffic is down; warnings are degraded optics, errors, flapping, drops or a single point of exposure.</p><div id="it"></div>`;
+  table($("#it",el), [{l:"Severity",k:"sev",f:r=>sevPill(r.sev)},{l:"Area",k:"area"},{l:"Object",k:"object",cls:"mono"},{l:"Finding",k:"message",cls:"wrap"}], M.issues, r=>{
+    if(r.area==="Port"||r.area==="Optics"||r.area==="ELMI"||r.area==="Capacity") go("port|"+r.object);
+    else if(r.area==="Service"){ const [t,i]=r.object.split(" "); go(`svc|${t}:${i}`); }
+    else if(r.area==="SAP"){ const x=M.saps.find(s=>s.sapId===r.object); if(x) go(`svc|${x.serviceType}:${x.serviceId}`); }
+    else if(r.area==="SDP") go("sdp|"+r.object);
+    else if(r.area==="SDP binding") go("sdp|"+r.object.split(":")[0]);
+    else if(r.area==="LSP"||r.area==="PCEP") go("lsp|"+r.object);
+  }, {what:"findings"});
+};
+R.ports = el => {
+  el.innerHTML = `<h2>Ports</h2><p class="lead">Every physical port and LAG with state, optics health, handoff label and LLDP neighbour. Role is derived: network if it is a LAG member or faces a router, access if it carries SAPs.</p><div id="pt"></div>`;
+  const role = p => p.id.startsWith("lag-")?"lag":p.lag?"network":p.saps.length?"access":/hairpin/i.test(p.elmi.uniId)?"mgmt hairpin":/^[AB]\//.test(p.id)?"cpm mgmt":p.oper==="up"?"up, no SAP":"unused";
+  table($("#pt",el), [
+    {l:"Port",k:"id",cls:"mono"},{l:"Oper",k:"oper",f:r=>pill(r.oper)},{l:"Role",v:role},{l:"LAG",v:r=>r.lag||(r.members?r.members.join("+"):"")},
+    {l:"Speed",k:"speedMbps",num:1,f:r=>r.speedMbps?fmtN(r.speedMbps):""},{l:"Optic",v:r=>r.optic?.vendorPart||""},
+    {l:"Rx dBm",num:1,v:r=>r.ddm["received-optical-power"]?.current,f:r=>{const m=r.ddm["received-optical-power"]; return m?`${m.current} ${m.status!=="ok"?pill(m.status):""}`:""}},
+    {l:"In %",k:"inUtilPct",num:1},{l:"Out %",k:"outUtilPct",num:1},{l:"Flaps",k:"flaps",num:1},{l:"Errors",num:1,v:r=>r.inErrors+r.crc+r.fcs},
+    {l:"SAPs",num:1,v:r=>r.saps.length},{l:"LLDP neighbour",v:r=>r.neighbors.map(n=>n.systemName||n.chassisId).join(", ")},
+    {l:"Handoff label (ELMI UNI)",v:r=>r.elmi.uniId,cls:"wrap small"}], M.ports, showPort, {what:"ports"});
+};
+R.optics = el => {
+  const rows = M.ports.filter(p=>p.optic && p.optic.equipped);
+  el.innerHTML = `<h2>Optics</h2><p class="lead">${rows.length} equipped transceivers. Margin is the distance in units to the nearest alarm threshold; a negative or small margin needs attention.</p><div id="ot"></div>`;
+  const m = (r,k) => r.ddm[k];
+  table($("#ot",el), [{l:"Port",k:"id",cls:"mono"},{l:"Oper",k:"oper",f:r=>pill(r.oper)},{l:"Health",k:"ddmWorst",f:r=>pill(r.ddmWorst)},{l:"Part",v:r=>r.optic.vendorPart},{l:"Model",v:r=>r.optic.model},{l:"Serial",v:r=>r.optic.serial,cls:"mono"},
+    {l:"λ nm",num:1,v:r=>r.optic.wavelengthNm},{l:"Age y",num:1,v:r=>r.optic.ageYears},
+    {l:"Rx dBm",num:1,v:r=>m(r,"received-optical-power")?.current},{l:"Rx margin",num:1,v:r=>m(r,"received-optical-power")?.margin},
+    {l:"Tx dBm",num:1,v:r=>m(r,"transmit-output-power")?.current},{l:"Temp °C",num:1,v:r=>m(r,"temperature")?.current},{l:"Bias mA",num:1,v:r=>m(r,"transmit-bias-current")?.current},
+    {l:"Volt",num:1,v:r=>(m(r,"supply-voltage")||m(r,"auxiliary-1"))?.current},{l:"Failed thresholds",v:r=>r.optic.failedThresholds,cls:"wrap small"}], rows, showPort, {what:"optics", sort:9, dir:1});
+};
+R.links = el => {
+  el.innerHTML = `<h2>Neighbours and LAGs</h2><p class="lead">LLDP neighbours grouped by system. LAG members are inferred: the member ports' packet counters add up to the LAG's counters.</p><h3>LAGs</h3><div id="lg"></div><h3>LLDP neighbours</h3><div id="nb"></div>`;
+  const lagRows = Object.entries(M.lags).map(([id,v])=>{ const p=portById[id]; const nb=[...new Set(v.members.flatMap(m=>portById[m].neighbors.map(n=>n.systemName)))]; const itf=M.interfaces.find(i=>i.neighborLag===id);
+    return {id, members:v.members.join(", "), err:v.matchErrorPct, oper:p.oper, nb:nb.join(", "), itf:itf?`${itf.name} ${itf.ip}`:"", speed:v.members.reduce((a,m)=>a+portById[m].speedMbps,0), inO:p.inPkts, outO:p.outPkts, lsps:M.lsps.filter(l=>l.egressLag===id).length}; });
+  table($("#lg",el), [{l:"LAG",k:"id",cls:"mono"},{l:"Oper",k:"oper",f:r=>pill(r.oper)},{l:"Members (inferred)",k:"members",cls:"mono"},{l:"Capacity Mb/s",k:"speed",num:1},{l:"Neighbour",k:"nb"},{l:"IP interface",k:"itf",cls:"mono"},{l:"PCEP LSPs egressing",k:"lsps",num:1},{l:"In pkts",k:"inO",num:1},{l:"Out pkts",k:"outO",num:1},{l:"Match error %",k:"err",num:1}], lagRows, r=>showPort(portById[r.id]), {what:"LAGs"});
+  table($("#nb",el), [{l:"Neighbour",k:"name"},{l:"Kind",k:"kind"},{l:"Release",k:"release"},{l:"Links",num:1,v:r=>r.links.length},{l:"Local ports",v:r=>r.links.map(k=>k.localPort).join(", "),cls:"mono"},{l:"Remote ports",v:r=>r.links.map(k=>k.remotePort).join(", "),cls:"mono"},{l:"Mgmt",v:r=>r.mgmt.join(", "),cls:"mono"},{l:"Chassis",k:"chassis",cls:"mono"}], M.neighbors, showNeighbor, {what:"neighbours"});
+};
+R.interfaces = el => {
+  el.innerHTML = `<h2>IP interfaces</h2><p class="lead">Router interfaces from the Base and management routers. The neighbour, ports and LAG are inferred from the interface name and confirmed when the ARP MAC shares a prefix with the neighbour's LLDP chassis ID.</p><div id="if"></div>`;
+  table($("#if",el), [{l:"Router",k:"router"},{l:"Interface",k:"name"},{l:"Oper",k:"oper",f:r=>pill(r.oper)},{l:"IPv4",k:"ip",cls:"mono"},{l:"Protocols",k:"protocols"},{l:"MTU",k:"mtu",num:1},
+    {l:"Neighbour",k:"neighborName"},{l:"LAG / ports",v:r=>[r.neighborLag, r.neighborPorts.join("+")].filter(Boolean).join(" · "),cls:"mono"},{l:"MAC matches LLDP",v:r=>r.macMatchesLldp==null?"":r.macMatchesLldp?"yes":"no"},
+    {l:"ARP",v:r=>r.arp.map(a=>`${a.ip} ${a.mac}`).join("; "),cls:"mono small wrap"},{l:"ICMP in",k:"icmpIn",num:1},{l:"ICMP in errors",k:"icmpInErr",num:1},{l:"TTL exceeded in",k:"icmpInTtlExceeded",num:1},{l:"Echo in / reply out",v:r=>`${fmtN(r.icmpInEcho)} / ${fmtN(r.icmpOutEchoReply)}`},{l:"Last change",k:"lastChange"}],
+    M.interfaces, r=>openDrawer(`Interface ${r.name}`, kv(Object.fromEntries(Object.entries(r).filter(([k])=>!["src","arp","neighborPorts"].includes(k)).map(([k,v])=>[k,esc(Array.isArray(v)?v.join(", "):v)]))) + `<h3>ARP</h3>` + r.arp.map(a=>kv({IP:esc(a.ip),MAC:esc(a.mac),State:pill(a.state),Type:esc(a.type),"Timer s":esc(a.timer)})).join("") + rawSection("All fields: interface state", r.src)), {what:"interfaces"});
+};
+R.services = el => {
+  el.innerHTML = `<h2>Services</h2><p class="lead">Config and state joined per service. Traffic is the SAP average since counters were last cleared.</p><div class="toolbar"><select id="sf"><option value="">All types</option><option>epipe</option><option>vpls</option><option>vprn</option></select><select id="so"><option value="">Any state</option><option>up</option><option>down</option></select></div><div id="st"></div>`;
+  const draw = () => { const t=$("#sf",el).value, o=$("#so",el).value; const rows = M.services.filter(s=>(!t||s.type===t)&&(!o||(s.oper||"")===o));
+    table($("#st",el), [{l:"Type",k:"type"},{l:"ID",k:"id",num:1},{l:"Name",k:"name",cls:"wrap"},{l:"Oper",k:"oper",f:r=>pill(r.oper)},{l:"Customer",v:r=>r.customer,f:r=>r.customer!=null?`${chip(r.customer,"cust|"+r.customer)} <span class="small muted">${esc(r.customerDesc)}</span>`:""},
+      {l:"SAPs",num:1,v:r=>r.saps.length},{l:"Ports",v:r=>[...new Set(r.saps.map(x=>x.port))].join(", "),cls:"mono"},{l:"SDP binds",num:1,v:r=>r.binds.length},{l:"Binds down",num:1,v:r=>r.binds.filter(b=>b.oper&&b.oper!=="up").length},
+      {l:"Far ends",v:r=>[...new Set(r.binds.map(b=>sdpById[String(b.sdpId)]?.farEndName).filter(Boolean))].join(", "),cls:"wrap small"},
+      {l:"MTU",k:"mtu",num:1},{l:"Rx avg",k:"rxAvgMbps",num:1,f:r=>fmtRate(r.rxAvgMbps)},{l:"Tx avg",k:"txAvgMbps",num:1,f:r=>fmtRate(r.txAvgMbps)},{l:"Drops",k:"rxDropPkts",num:1},{l:"RD / VPLS-ID",v:r=>r.rd||r.vplsId||""}], rows, showService, {what:"services"}); };
+  $("#sf",el).onchange = draw; $("#so",el).onchange = draw; draw();
+};
+R.saps = el => {
+  el.innerHTML = `<h2>SAPs</h2><p class="lead">Every service access point, split into port, outer and inner VLAN, with the port's state and the handoff it faces.</p><div id="sp"></div>`;
+  table($("#sp",el), [{l:"SAP",k:"sapId",cls:"mono"},{l:"Port",k:"port",f:r=>chip(r.port,"port|"+r.port)},{l:"Outer",k:"outer"},{l:"Inner",k:"inner"},{l:"Oper",k:"oper",f:r=>pill(r.oper)},
+    {l:"Port oper",v:r=>portById[r.port]?.oper,f:r=>pill(portById[r.port]?.oper)},{l:"Service",v:r=>`${r.serviceType} ${r.serviceId}`,f:r=>chip(`${r.serviceType} ${r.serviceId}`,`svc|${r.serviceType}:${r.serviceId}`)},{l:"Service name",k:"serviceName",cls:"wrap small"},
+    {l:"Customer",k:"customer"},{l:"Description",k:"description",cls:"wrap small"},{l:"QoS in/out",v:r=>`${r.ingressQos??""}/${r.egressQos??""}`},
+    {l:"Rx avg",k:"rxAvgMbps",num:1,f:r=>fmtRate(r.rxAvgMbps)},{l:"Tx avg",k:"txAvgMbps",num:1,f:r=>fmtRate(r.txAvgMbps)},{l:"Rx total",k:"rxOctets",num:1,f:r=>fmtB(r.rxOctets)},{l:"Tx total",k:"txOctets",num:1,f:r=>fmtB(r.txOctets)},
+    {l:"Rx drops",k:"rxDropPkts",num:1},{l:"Tx drops",k:"txDropPkts",num:1},{l:"MACs",k:"macsLearned",num:1},{l:"Faces (LLDP / ELMI)",v:r=>{const p=portById[r.port]; return p?(p.neighbors.map(n=>n.systemName).join(", ")||p.elmi.siteCodes.join(", ")):""},cls:"small"}],
+    M.saps, r=>go(`svc|${r.serviceType}:${r.serviceId}`), {what:"SAPs"});
+};
+R.sdps = el => {
+  el.innerHTML = `<h2>SDPs</h2><p class="lead">Service tunnels to far-end routers, each riding a named RSVP LSP. Bindings counts the services using the SDP on this router.</p><div id="sd"></div>`;
+  table($("#sd",el), [{l:"SDP",k:"id",num:1},{l:"Oper",k:"oper",f:r=>pill(r.oper)},{l:"Far-end router",k:"farEndName"},{l:"Far-end IP",k:"farEnd",cls:"mono"},{l:"LSP",k:"lspName",f:r=>r.lspName?chip(r.lspName,"lsp|"+r.lspName):""},{l:"LSP oper",k:"lspOper",f:r=>pill(r.lspOper)},
+    {l:"Active type",k:"activeLspType"},{l:"MTU",k:"operMtu",num:1},{l:"Keep-alive",k:"kaOper",f:r=>pill(r.kaOper)},{l:"Hellos lost",k:"helloLost",num:1},{l:"Loss %",num:1,v:r=>+(r.helloLost/Math.max(r.helloReq,1)*100).toFixed(4)},
+    {l:"Bindings",num:1,v:r=>r.bindings.length},{l:"Spoke / mesh / BGP",v:r=>["spoke","mesh","bgp-auto"].map(k=>r.bindings.filter(b=>b.kind===k).length).join(" / ")},{l:"Description",k:"description",cls:"small"}], M.sdps, showSdp, {what:"SDPs"});
+};
+R.lsps = el => {
+  el.innerHTML = `<h2>RSVP LSPs</h2><p class="lead">LSP state from the router joined by name to the PCEP export for the ERO. Services riding counts SDP bindings that would be affected if the LSP failed.</p><div id="ls"></div>${M.pcepOnly.length?`<h3>In PCEP but not in MPLS state</h3><div id="po"></div>`:""}`;
+  table($("#ls",el), [{l:"LSP",k:"name"},{l:"Oper",k:"oper",f:r=>pill(r.oper)},{l:"Far end",k:"farEndName"},{l:"Metric",k:"metric",num:1},{l:"Up for",k:"upSec",num:1,f:r=>fmtDur(r.upSec)},{l:"Transitions",k:"transitions",num:1},{l:"Path changes",k:"pathChanges",num:1},
+    {l:"Last MBB",k:"mbbType"},{l:"FRR",k:"frr",f:r=>pill(String(r.frr))},{l:"Egress",v:r=>r.egressLag||"",cls:"mono"},{l:"PCEP",v:r=>r.pcep?.oper||"",f:r=>r.pcep?pill(r.pcep.oper):'<span class="muted">—</span>'},{l:"Hops",num:1,v:r=>r.pcep?.hops},
+    {l:"ERO path",v:r=>r.ero.map(h=>h.name||h.ip).join(" › "),cls:"wrap small"},{l:"SDPs",v:r=>r.sdps.join(", ")},{l:"Services riding",k:"serviceCount",num:1}], M.lsps, showLsp, {what:"LSPs"});
+  if(M.pcepOnly.length) table($("#po",el), [{l:"Name",k:"name"},{l:"Oper",k:"oper"},{l:"Endpoint",k:"endpoint"},{l:"ERO",k:"ero",cls:"wrap small"}], M.pcepOnly, null);
+};
+R.trace = el => {
+  el.innerHTML = `<h2>End-to-end service trace</h2><p class="lead">Pick a service to see its whole chain: customer, access port and handoff, the service, each SDP binding, the LSP and its signalled hops to the far-end router.</p><div class="toolbar"><select id="trace-sel" style="min-width:420px">${M.services.map(s=>`<option value="${svcKey(s)}">${s.type} ${s.id} · ${esc(s.name)} · ${s.oper||"?"}</option>`).join("")}</select></div><div id="trace-out"></div>`;
+  $("#trace-sel").onchange = renderTrace; renderTrace();
+};
+function node(t, n, body, go){ return `<div class="node" ${go?`data-go="${esc(go)}" style="cursor:pointer"`:""}><div class="t">${t}</div><div class="n">${n}</div>${body||""}</div>`; }
+function renderTrace(){
+  const s = svcByKey[$("#trace-sel").value]; if(!s) return; const c = custById[String(s.customer)];
+  let h = "";
+  const cust = node("Customer", esc(c?c.description||c.id:s.customer), c?`<div class="muted">${esc(c.contact||"")} ${esc(c.phone||"")}</div>`:"", c?"cust|"+c.id:null);
+  const svc = node(s.type.toUpperCase()+" "+s.id, esc(s.name), `<div>${pill(s.oper)} MTU ${esc(s.mtu)}</div><div class="muted">${s.saps.length} SAP · ${s.binds.length} SDP binding</div>`, "svc|"+svcKey(s));
+  const sapNodes = s.saps.length ? s.saps.map(x=>{ const p = portById[x.port]; const far = p ? (p.neighbors.map(n=>`${n.systemName} ${n.remotePortId}`).join(", ") || p.elmi.uniId) : "";
+    return node("SAP", `<span class="mono">${esc(x.sapId)}</span>`, `<div>${pill(x.oper)} port ${pill(p?.oper)}</div><div class="muted">${p?.optic?.vendorPart?esc(p.optic.vendorPart)+" · ":""}${p?.ddm["received-optical-power"]?`Rx ${p.ddm["received-optical-power"].current} dBm`:""}</div><div class="small">${esc(far)}</div><div class="muted">${fmtRate(x.rxAvgMbps)} in · ${fmtRate(x.txAvgMbps)} out</div>`, "port|"+x.port); }).join("") : node("SAP","none","");
+  h += `<h3>Access side</h3><div class="chain">${cust}<span class="arrow">→</span><div style="display:flex;flex-direction:column;gap:6px">${sapNodes}</div><span class="arrow">→</span>${svc}</div>`;
+  if(s.interfaces.length) h += `<h3>Routed interfaces</h3>` + s.interfaces.map(i=>`<div class="chain">${svc}<span class="arrow">→</span>${node("Interface",esc(i.name),`<div class="mono">${esc(i.address)}</div><div class="muted">VPLS ${esc(i.vplsBinding||"")}</div>`, i.vplsBinding&&M.services.find(v=>v.name===i.vplsBinding)?"svc|vpls:"+M.services.find(v=>v.name===i.vplsBinding).id:null)}</div>`).join("");
+  if((s.routedBy||[]).length) h += `<p>Routed by ${s.routedBy.map(r=>chip(`vprn ${r.vprn} ${r.address}`,"svc|vprn:"+r.vprn)).join(" ")}</p>`;
+  if(s.binds.length){ h += `<h3>Network side (${s.binds.length} SDP bindings)</h3>`;
+    for(const b of s.binds){ const sd = sdpById[String(b.sdpId)], l = sd && lspByName[sd.lspName];
+      h += `<div class="chain">${node(b.kind+" binding", `<span class="mono">${esc(b.bindId)}</span>`, `<div>${pill(b.oper)}</div><div class="muted">${fmtB(b.inOctets)} in · ${fmtB(b.outOctets)} out</div>`)}<span class="arrow">→</span>` +
+        (sd ? node("SDP "+sd.id, esc(sd.farEndName||sd.farEnd), `<div>${pill(sd.oper)} keep-alive ${pill(sd.kaOper)}</div><div class="mono muted">${esc(sd.farEnd)}</div>`, "sdp|"+sd.id) : node("SDP", esc(b.sdpId), '<div class="muted">not in SDP data</div>')) +
+        (l ? `<span class="arrow">→</span>${node("LSP", esc(l.name), `<div>${pill(l.oper)} metric ${esc(l.metric)}</div><div class="muted">${l.egressLag?("via "+esc(l.egressLag)):""} ${fmtN(l.transitions)} transitions</div>`, "lsp|"+l.name)}<span class="arrow">→</span><div class="node" style="max-width:none"><div class="t">Signalled path (PCEP ERO)</div>${eroHtml(l)}</div>` : sd&&sd.lspName ? `<span class="arrow">→</span>${node("LSP", esc(sd.lspName), '<div class="muted">not in LSP state</div>')}` : "") + `</div>`; } }
+  else if(s.type!=="vprn") h += `<p class="muted">No SDP bindings: the service is local to this router.</p>`;
+  $("#trace-out").innerHTML = h;
+}
+R.customers = el => {
+  el.innerHTML = `<h2>Customers</h2><p class="lead">Customer records configured on this router and the services that reference them.</p><div id="cu"></div>`;
+  table($("#cu",el), [{l:"ID",k:"id",num:1},{l:"Name",k:"name"},{l:"Description",k:"description",cls:"wrap"},{l:"Contact",k:"contact"},{l:"Phone",k:"phone"},{l:"Services",num:1,v:r=>r.services.length},{l:"Services down",num:1,v:r=>r.services.filter(k=>svcByKey[k]?.oper&&svcByKey[k].oper!=="up").length},{l:"Service list",v:r=>r.services.join(", "),cls:"wrap small"}], M.customers, showCustomer, {what:"customers"});
+};
+R.pwt = el => {
+  el.innerHTML = `<h2>Pseudowire templates</h2><p class="lead">Templates used by BGP-signalled VPLS to create pseudowires automatically.</p><div id="pw"></div>`;
+  table($("#pw",el), [{l:"Policy",k:"policyId",num:1},{l:"Split horizon group",k:"splitHorizonGroup"},{l:"Use provisioned SDP",v:r=>r.useProvisionedSdp?"yes":""},{l:"Prefer provisioned SDP",v:r=>r.preferProvisionedSdp?"yes":""},{l:"Force VLAN VC",v:r=>r.forceVlanVcForwarding?"yes":""},{l:"Hash label",v:r=>r.hashLabel?"yes":""},{l:"Control word",v:r=>r.controlWord?"yes":""},{l:"Used by",v:r=>r.usedBy.join(", "),cls:"wrap small"}], M.pwTemplates, r=>openDrawer(`PW template ${r.policyId}`, rawSection("All fields", r.src)), {what:"templates"});
+};
+R.chassis = el => {
+  el.innerHTML = `<h2>Chassis layout</h2><p class="lead">Cards and MDAs as they appear in port IDs (slot/MDA/port), with each port coloured by state. Click a port for detail.</p>` + M.chassis.map(c=>`<div class="card" style="margin-bottom:10px"><b>${/^\d/.test(c.slot)?"Card "+c.slot:c.slot}</b>${c.mdas.map(m=>`<div style="margin:6px 0 0 8px"><span class="muted small">${m.mda==="-"?"":"MDA "+c.slot+"/"+m.mda} </span>${m.ports.map(p=>{const P=portById[p]; return `<span class="chip link" data-go="port|${p}" style="border-color:${P.oper==="up"?"var(--ok)":"var(--bad)"}">${p} ${P.speedMbps?(P.speedMbps>=10000?"10G":P.speedMbps>=1000?"1G":P.speedMbps+"M"):""}${P.lag?" · "+P.lag:""}${P.saps.length?" · "+P.saps.length+" SAP":""}</span>`;}).join("")}</div>`).join("")}</div>`).join("");
+};
+/* ---------- live tabs (newest saved run of every query) ---------- */
+const LV = M.live;
+function linkChips(refs){ return (refs||[]).map(r => chip(r.label, r.ref)).join(" "); }
+R.live = el => {
+  const causes = {};
+  LV.findings.forEach(f => { if (f.cause) (causes[f.cause] = causes[f.cause] || []).push(f); });
+  const causeCards = Object.entries(causes).map(([c, fs]) => {
+    const port = (fs[0].refs || []).find(r => r.ref.startsWith("port|"));
+    const affected = [...new Set(fs.map(f => f.query))].join(", ");
+    return `<div class="card" style="margin-bottom:8px"><b>${esc(c)}</b> ${port ? chip(port.label, port.ref) : ""}
+      <div class="small muted" style="margin-top:4px">Affects ${fs.length} finding(s) in: ${esc(affected)}</div>
+      <div style="margin-top:6px">${linkChips(fs.flatMap(f => f.refs).filter((r, i, a) => a.findIndex(x => x.ref === r.ref) === i))}</div></div>`;
+  }).join("") || '<p class="muted">No root causes identified in the stored runs.</p>';
+  el.innerHTML = `<h2>Live findings</h2><p class="lead">Findings from the newest saved run of every query. Root causes group findings that share one fault, for example a port that is down. Click any link to open the object.</p>
+    <h3>Root causes</h3>${causeCards}<h3>All findings</h3><div id="lf"></div>`;
+  table($("#lf", el), [
+    {l: "Severity", k: "severity", f: r => sevPill(r.severity)},
+    {l: "Source", k: "query", cls: "small"},
+    {l: "Object", k: "object", cls: "mono wrap"},
+    {l: "Finding", k: "message", cls: "wrap"},
+    {l: "Links", v: r => "", f: r => linkChips(r.refs)}
+  ], LV.findings.filter(f => f.severity !== "info"), r => { if (r.refs && r.refs[0]) go(r.refs[0].ref); }, {what: "findings"});
+};
+R.health = el => {
+  const H = LV.health, ch = H.chassis;
+  let h = `<h2>Hardware & system</h2><p class="lead">Chassis, cards, redundancy and system state from the stored runs.</p>`;
+  h += `<div class="grid two">`;
+  if (ch) h += `<div class="card"><h3 style="margin-top:0">Chassis</h3>${kv({
+      "Name": esc(ch.name), "Class / role": esc(ch.class) + " / " + esc(ch.role), "State": pill(ch.state),
+      "Serial": `<span class="mono">${esc(ch.serial)}</span>`, "Part": `<span class="mono">${esc(ch.part)}</span>`,
+      "CLEI": `<span class="mono">${esc(ch.clei)}</span>`, "Last boot": esc(ch.lastBoot),
+      "Fans": ch.fans.map(f => `${esc(f.slot)}: ${pill(f.state)}`).join(" "),
+      "Power supplies": ch.psus.map(p => `${esc(p.id)}: ${pill(p.status)}`).join(" ")})}</div>`;
+  if (H.redundancy) { const r = H.redundancy;
+    h += `<div class="card"><h3 style="margin-top:0">Redundancy</h3>${kv({
+      "Standby CPM": pill(r.standby), "Standby up since": esc(r.standbyUp), "Standby version": esc(r.standbyVersion),
+      "Config synced to standby": r.configSync === "never" ? '<span class="pill p-bad">never</span>' : esc(r.configSync),
+      "Boot file synced": esc(r.bootSync), "Sync status": pill(r.syncStatus), "Failover": esc(r.failover)})}
+      ${r.configSync === "never" ? '<p class="small" style="color:var(--bad)">The standby has never received the configuration. A switchover could start with an old config.</p>' : ""}</div>`; }
+  h += `</div>`;
+  h += `<h3>Cards</h3><div class="tw" style="max-height:none"><table><thead><tr><th>Slot</th><th>Type</th><th>State</th><th class="num">Temp / limit (C)</th><th>Alarm</th><th>Failure</th><th>Last boot</th><th class="num">MDAs</th><th>Serial</th></tr></thead><tbody>${
+    H.cards.map(c => { const hot = c.temp != null && c.limit > 0 && c.temp >= c.limit - 10;
+      return `<tr><td>${esc(c.slot)}</td><td class="mono">${esc(c.type)}</td><td>${pill(c.state)}</td>
+      <td class="num" style="${hot ? "color:var(--bad);font-weight:600" : ""}">${fmtN(c.temp)} / ${fmtN(c.limit)}</td>
+      <td>${esc(c.alarm)}</td><td>${esc(c.failure)}</td><td>${esc(c.lastBoot)}</td><td class="num">${c.mdas}</td><td class="mono">${esc(c.serial)}</td></tr>`; }).join("")
+    }</tbody></table></div>`;
+  h += `<h3>System components (${H.system.length}, ${H.system.filter(s => s.state !== "up").length} not up)</h3>
+    <div class="tw" style="max-height:none"><table><thead><tr><th>Component</th><th>State</th></tr></thead><tbody>${
+    H.system.map(s => `<tr><td class="mono">${esc(s.name)}</td><td>${pill(s.state)}</td></tr>`).join("") || '<tr><td colspan="2" class="muted">No system data stored.</td></tr>'
+    }</tbody></table></div>`;
+  el.innerHTML = h;
+};
+R.routing = el => {
+  el.innerHTML = `<h2>Routing & protocols</h2><p class="lead">Each protocol from the stored runs: how many items reported an operational state, and which are not up. Open a protocol's raw data under Query status.</p>
+    <div class="tw" style="max-height:none"><table><thead><tr><th>Protocol</th><th>Status</th><th class="num">Items</th><th class="num">Not up</th><th>Not up (first 40)</th></tr></thead><tbody>${
+    LV.routing.map(r => `<tr><td>${esc(r.label)}</td><td>${pill(r.status === "down" ? "down" : r.status === "ok" ? "up" : r.status)}</td>
+      <td class="num">${r.total}</td><td class="num">${r.down.length}</td><td class="small">${r.down.map(esc).join("<br>")}</td></tr>`).join("")
+    }</tbody></table></div>`;
+};
+R.queries = el => {
+  el.innerHTML = `<h2>Query status</h2><p class="lead">Every query with its latest saved run. Click a row to see the stored response.</p><div id="qt"></div>`;
+  table($("#qt", el), [
+    {l: "Query", k: "label"},
+    {l: "Status", k: "status", f: r => pill(r.status === "ok" ? "up" : r.status === "error" ? "down" : "no data")},
+    {l: "Saved", k: "saved", cls: "mono"},
+    {l: "Error", k: "error", cls: "wrap small"}
+  ], LV.queries, r => { if (SRC["st:" + r.id]) openDrawer(r.label, rawSection("Stored response", ["st:" + r.id, []])); }, {what: "queries"});
+};
+R.fdb = el => {
+  if (!LV.fdb) {
+    el.innerHTML = `<h2>MAC table</h2><p class="muted">This report was built without the MAC table. Copy the latest build_device_report.py into this folder and rebuild the report.</p>`;
+    return;
+  }
+  const F = LV.fdb;
+  if (!F.total) {
+    el.innerHTML = `<h2>MAC table</h2><p class="muted">No MAC table stored for this device. Run the "FDB, all services (CLI: service fdb-mac)" query, then rebuild the report.</p>`;
+    return;
+  }
+  const learned = F.rows.filter(r => r.entry_type.startsWith("L")).length;
+  el.innerHTML = `<h2>MAC address table (FDB)</h2>
+    <p class="lead">${F.total.toLocaleString()} MAC entries (${learned.toLocaleString()} learned) across ${F.services.length} services, from the stored "service fdb-mac" run. Click a service or port to open it.</p>
+    <h3>By service</h3><div id="fs"></div>
+    <h3>All MAC entries</h3><div id="fm"></div>`;
+  table($("#fs", el), [
+    {l: "Service", v: r => `${r.type} ${r.id}`, f: r => r.ref ? chip(`${r.type} ${r.id}`, r.ref) : esc(r.id)},
+    {l: "Name", k: "name", cls: "wrap small"},
+    {l: "MACs", k: "count", num: 1},
+    {l: "Learned", k: "learned", num: 1}
+  ], F.services, r => { if (r.ref) go(r.ref); }, {what: "services"});
+  table($("#fm", el), [
+    {l: "MAC", k: "mac", cls: "mono"},
+    {l: "Service", v: r => r.service_id, f: r => r.svcRef ? chip(`${r.svcType} ${r.service_id}`, r.svcRef) : esc(r.service_id)},
+    {l: "Port / SDP", v: r => r.port_or_sdp, f: r => r.portRef ? chip(r.port_or_sdp, r.portRef) : r.sdpRef ? chip(`SDP ${r.port_or_sdp}`, r.sdpRef) : esc(r.source)},
+    {l: "Transport", k: "transport"},
+    {l: "Type", k: "entry_type"},
+    {l: "Age (s)", k: "age_seconds", num: 1},
+    {l: "Last change", k: "last_change", cls: "mono small"}
+  ], F.rows, r => { if (r.svcRef) go(r.svcRef); }, {what: "MAC entries"});
+};
+R.raw = el => {
+  const keys = Object.keys(SRC);
+  el.innerHTML = `<h2>All raw data</h2><p class="lead">Every field returned by every response, flattened to path and value. Use this to check anything the other tabs summarise.</p><div class="toolbar"><select id="rs">${keys.map(k=>`<option value="${k}">${esc((M.sources.find(s=>s.key===k)||{}).label||k)}</option>`).join("")}</select><input id="rq" placeholder="Filter path or value (min 2 chars)"><span class="count" id="rc"></span></div><div class="tw"><table class="raw"><tbody id="rb"></tbody></table></div>`;
+  const draw = () => { const rows = flatten(SRC[$("#rs",el).value]); const q = $("#rq",el).value.toLowerCase(); const f = q.length>1 ? rows.filter(([k,v])=>(k+" "+v).toLowerCase().includes(q)) : rows;
+    $("#rc",el).textContent = `${f.length.toLocaleString()} of ${rows.length.toLocaleString()} fields${f.length>3000?" (showing first 3,000)":""}`;
+    $("#rb",el).innerHTML = f.slice(0,3000).map(([k,v])=>`<tr><td class="mono muted">${esc(k)}</td><td class="mono">${esc(v)}</td></tr>`).join(""); };
+  $("#rs",el).onchange = draw; $("#rq",el).oninput = draw; draw();
+};
+
+$("#theme").onclick = () => { const r = document.documentElement; const dark = r.dataset.theme ? r.dataset.theme==="dark" : matchMedia("(prefers-color-scheme: dark)").matches; r.dataset.theme = dark ? "light" : "dark"; };
+let start = "overview"; try{ start = localStorage.getItem("devrep-tab") || start; }catch(e){}
+if(!R[start]) start = "overview";
+switchTab(start);
+</script>
+</body>
+</html>

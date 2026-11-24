@@ -1,0 +1,372 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>__TITLE__</title>
+<style>
+:root{--bg:#f6f7f9;--panel:#fff;--ink:#1b1f24;--muted:#5b6470;--line:#e2e5ea;--accent:#2457c5;--accent-soft:#e8eefb;--bad:#c62828;--bad-soft:#fde7e7;--mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;--sans:system-ui,-apple-system,"Segoe UI",Roboto,Arial,sans-serif}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#0f1216;--panel:#171b21;--ink:#e6e9ee;--muted:#9aa4b2;--line:#2a3038;--accent:#7aa2ff;--accent-soft:#1c2638;--bad:#ff6b6b;--bad-soft:#331a1a}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:14px/1.4 var(--sans)}
+header{padding:16px 22px;background:linear-gradient(120deg,#2457c5 0%,#7c5cff 50%,#14b8a6 100%);border-bottom:1px solid rgba(255,255,255,.25);display:flex;gap:14px;align-items:center;flex-wrap:wrap;box-shadow:0 8px 28px rgba(36,87,197,.25)}
+header h1{font-size:19px;margin:0;color:#fff;font-weight:750;letter-spacing:-.01em;text-shadow:0 2px 12px rgba(0,0,0,.2)}
+.mode{font-size:12px;color:rgba(255,255,255,.9);background:rgba(255,255,255,.18);padding:3px 10px;border-radius:999px;backdrop-filter:blur(6px)}
+.controls{display:flex;gap:8px;flex-wrap:wrap;align-items:center;padding:12px 18px;border-bottom:1px solid var(--line);background:linear-gradient(90deg,rgba(124,92,255,.14),rgba(20,184,166,.08) 60%,rgba(36,87,197,.10)),var(--panel)}
+.controls:empty{display:none}
+input,select,button{font:inherit;padding:6px 9px;border:1px solid var(--line);border-radius:6px;background:var(--panel);color:var(--ink)}
+button{cursor:pointer}
+button.primary{background:var(--accent);color:#fff;border-color:var(--accent)}
+.wrap{padding:12px 18px 28px}
+.results{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px}
+.tabs{display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin:8px 0}
+.on{background:var(--accent-soft);border-color:var(--accent)!important}
+.muted{color:var(--muted)}
+.err{background:var(--bad-soft);color:var(--bad);padding:10px 12px;border-radius:6px;margin:8px 0;white-space:pre-wrap;font-family:var(--mono);font-size:12px}
+.row{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:6px 0}
+.tw{overflow:auto;max-height:72vh;border:1px solid var(--line);border-radius:8px;background:var(--panel)}
+table{border-collapse:collapse;width:100%;font-size:13px}
+th,td{border-bottom:1px solid var(--line);padding:5px 8px;text-align:left;vertical-align:top;white-space:nowrap}
+th{position:sticky;top:0;background:var(--panel);z-index:1}
+.mono{font-family:var(--mono);font-size:12px}
+pre{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:10px;overflow:auto;max-height:72vh;font:12px/1.4 var(--mono);white-space:pre;margin:8px 0}
+.pill{display:inline-block;padding:2px 8px;border-radius:10px;font-size:12px;border:1px solid var(--line);margin-right:4px}
+.pill.crit{background:var(--bad-soft);color:var(--bad);border-color:var(--bad)}
+.pill.warn{background:#fff4d6;color:#9a6700;border-color:#e0b341}
+.close{margin-left:6px;font-weight:bold;color:var(--muted)}
+.close:hover{color:var(--bad)}
+details{margin-left:14px}
+summary{cursor:pointer;font-family:var(--mono);font-size:12px;padding:1px 0}
+.leaf{font-family:var(--mono);font-size:12px;margin-left:14px;word-break:break-all}
+</style>
+</head>
+<body>
+<header><h1>__TITLE__</h1><span class="mode" id="mode"></span></header>
+<div class="controls" id="controls"></div>
+<div class="wrap">
+  <div class="results" id="results"></div>
+  <div id="status" class="muted"></div>
+  <div id="view"></div>
+</div>
+<script>
+// Replaced by generate.py in offline files. Stays null in the live page.
+const EMBED = /*__EMBED__*/null;
+const LIVE = EMBED === null;
+
+const $ = id => document.getElementById(id);
+const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+
+let results = LIVE ? [] : (EMBED.results || []);
+let active = 0, view = "table", tableSel = 0, filter = "";
+let reportReady = false, reportStamp = 0;  // the device report, shown in the Device report tab
+let currentRows = [], currentCols = [], filteredRows = [], tableReady = false;
+
+/* ---------- data helpers ---------- */
+// Find every list of objects in the response, with its path (e.g. "service.sap").
+function lists(obj, path = "", out = []) {
+  if (Array.isArray(obj)) {
+    if (obj.length && obj.every(x => x && typeof x === "object" && !Array.isArray(x))) {
+      out.push({ path: path || "(root)", rows: obj });
+      obj.forEach(row => lists(row, path, out));   // lists nested inside each row
+    } else {
+      obj.forEach(x => lists(x, path, out));
+    }
+  } else if (obj && typeof obj === "object") {
+    for (const [k, v] of Object.entries(obj)) lists(v, path ? `${path}.${k}` : k, out);
+  }
+  return out;
+}
+// Flatten one row: nested objects become dotted keys, nested lists become a count.
+function flatten(o, prefix = "", out = {}) {
+  for (const [k, v] of Object.entries(o)) {
+    const key = prefix ? `${prefix}.${k}` : k;
+    if (v && typeof v === "object" && !Array.isArray(v)) flatten(v, key, out);
+    else if (Array.isArray(v)) out[key] = v.length ? `[${v.length} items]` : "[]";
+    else out[key] = v;
+  }
+  return out;
+}
+// CLI replies carry their text in "response" fields.
+function texts(o, out = []) {
+  if (o && typeof o === "object") for (const [k, v] of Object.entries(o)) {
+    if (k === "response" && typeof v === "string") out.push(v); else texts(v, out);
+  }
+  return out;
+}
+
+/* ---------- controls ---------- */
+function buildControls() {
+  if (!LIVE) {
+    $("mode").textContent = `Offline snapshot · node ${EMBED.node || ""} · generated ${EMBED.generatedAt || ""}`;
+    return;
+  }
+  $("mode").textContent = "Live · served by viewer server";
+  $("controls").innerHTML = `
+    <input id="node" placeholder="node id, e.g. 162.104.38.226" size="20" list="nodes">
+    <datalist id="nodes"></datalist>
+    <button id="loadNodes">Load nodes</button>
+    <select id="query"></select>
+    <input id="cli" placeholder="or CLI show, e.g. service fdb-mac" size="32">
+    <button class="primary" id="run">Run</button>
+    <button id="runAll" title="Run every query for this node (takes a few minutes); then rebuilds the report">Run all</button>
+    <button id="buildReport" title="Build the device report from the stored runs">Build report</button>
+    <button id="histBtn">Saved runs</button>
+    <select id="hist"></select>
+    <button id="openHist">Open</button>`;
+  $("run").onclick = runQuery;
+  $("runAll").onclick = runAll;
+  $("buildReport").onclick = () => buildReport(false);
+  $("loadNodes").onclick = loadNodes;
+  $("histBtn").onclick = loadHistory;
+  $("openHist").onclick = openHistory;
+  $("node").addEventListener("keydown", e => { if (e.key === "Enter") runQuery(); });
+  $("cli").addEventListener("keydown", e => { if (e.key === "Enter") runQuery(); });
+  fetch("/api/queries").then(r => r.json()).then(list => {
+    $("query").innerHTML = list.map(q => `<option value="${esc(q.id)}">${esc(q.label)}</option>`).join("");
+  }).catch(e => { $("status").innerHTML = `<div class="err">Cannot load queries: ${esc(e)}</div>`; });
+}
+async function loadNodes() {
+  $("status").textContent = "Loading nodes…";
+  const r = await fetch("/api/nodes");
+  const j = await r.json();
+  if (!r.ok) { $("status").innerHTML = `<div class="err">${esc(j.error)}</div>`; return; }
+  $("nodes").innerHTML = j.nodes.map(n => `<option value="${esc(n.id)}">${esc(n.status)}</option>`).join("");
+  $("status").textContent = `${j.nodes.length} nodes loaded. Pick one from the node box.`;
+}
+async function runQuery() {
+  const node = $("node").value.trim(), cli = $("cli").value.trim();
+  if (!node) { $("status").textContent = "Enter a node id first."; return; }
+  const body = cli ? { node, cli } : { node, query: $("query").value };
+  $("status").textContent = "Querying ODL…";
+  let entry;
+  try {
+    const r = await fetch("/api/run", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+    const j = await r.json();
+    entry = r.ok ? j : { node, label: cli ? `CLI: ${cli}` : $("query").selectedOptions[0]?.text, error: j.error };
+  } catch (e) {
+    entry = { node, label: cli ? `CLI: ${cli}` : "", error: String(e) };
+  }
+  results.push(entry);
+  active = results.length - 1;
+  $("status").textContent = entry.savedTo ? `Saved to store: ${entry.savedTo}` : "";
+  render();
+}
+async function buildReport(quiet) {
+  const b = $("buildReport");
+  if (b) b.disabled = true;
+  if (!quiet) $("status").textContent = "Building the device report from the stored runs…";
+  try {
+    const r = await fetch("/api/build-report", { method: "POST" });
+    const j = await r.json();
+    if (!r.ok) { $("status").innerHTML = `<div class="err">${esc(j.error)}</div>`; return false; }
+    reportReady = true;
+    reportStamp = Date.now();
+    active = -2;  // open the Device report tab
+    $("status").textContent = `Report built: ${j.file} (${j.megabytes} MB), from the stored runs.`;
+    render();
+    return true;
+  } catch (e) {
+    $("status").innerHTML = `<div class="err">${esc(String(e))}</div>`;
+    return false;
+  } finally {
+    if (b) b.disabled = false;
+  }
+}
+
+async function runAll() {
+  const node = $("node").value.trim();
+  if (!node) { $("status").textContent = "Enter a node id first."; return; }
+  const button = $("runAll");
+  button.disabled = true;
+  $("status").textContent = `Running all queries for ${node}. This takes a few minutes; saving each result…`;
+  try {
+    const r = await fetch("/api/run-all", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ node }) });
+    const j = await r.json();
+    if (!r.ok) { $("status").innerHTML = `<div class="err">${esc(j.error)}</div>`; return; }
+    const ok = j.results.filter(x => !x.error).length;
+    results = results.concat(j.results);
+    active = -1;  // open the All findings tab
+    $("status").textContent = `${ok} of ${j.results.length} queries ok. Each result is saved in the store.`;
+    render();
+    await buildReport(true);  // rebuild the device report from the new runs
+  } catch (e) {
+    $("status").innerHTML = `<div class="err">${esc(String(e))}</div>`;
+  } finally {
+    button.disabled = false;
+  }
+}
+
+async function loadHistory() {
+  const node = $("node").value.trim();
+  if (!node) { $("status").textContent = "Enter a node id first."; return; }
+  const r = await fetch("/api/history?node=" + encodeURIComponent(node));
+  const j = await r.json();
+  if (!r.ok) { $("status").innerHTML = `<div class="err">${esc(j.error)}</div>`; return; }
+  $("hist").innerHTML = j.files.length
+    ? j.files.map(f => `<option value="${esc(f)}">${esc(f)}</option>`).join("")
+    : `<option value="">no saved runs</option>`;
+  $("status").textContent = `${j.files.length} saved runs for ${node}`;
+}
+async function openHistory() {
+  const path = $("hist").value;
+  if (!path) return;
+  const r = await fetch("/api/saved?path=" + encodeURIComponent(path));
+  const j = await r.json();
+  if (!r.ok) { $("status").innerHTML = `<div class="err">${esc(j.error)}</div>`; return; }
+  j.savedTo = path;
+  results.push(j);
+  active = results.length - 1;
+  render();
+}
+
+/* ---------- rendering ---------- */
+function render() {
+  const hasAll = results.length > 1;
+  if (active === -1 && !hasAll) active = 0;
+  const allBtn = hasAll
+    ? `<button data-i="-1" class="${active === -1 ? "on" : ""}">All findings (${allFindings().length})</button>` : "";
+  const repBtn = reportReady ? `<button data-i="-2" class="${active === -2 ? "on" : ""}">Device report</button>` : "";
+  $("results").innerHTML = allBtn + repBtn + results.map((r, i) =>
+    `<button data-i="${i}" class="${i === active ? "on" : ""}">${esc(r.label || r.query || "result")} <span class="muted">${esc(r.node || "")}</span> <span class="close" data-close="${i}" title="Close this tab">×</span></button>`
+  ).join("") + (results.length > 1 ? `<button id="closeAll">Close all</button>` : "");
+  $("results").querySelectorAll("button").forEach(b => b.onclick = e => {
+    if (b.id === "closeAll") { results = []; active = 0; render(); return; }
+    if (e.target.dataset.close !== undefined) { closeResult(+e.target.dataset.close); return; }
+    active = +b.dataset.i;
+    render();
+  });
+
+  if (active === -2) {
+    $("view").innerHTML = `<iframe src="/report?v=${reportStamp}" title="Device report" style="width:100%;height:82vh;border:1px solid var(--line);border-radius:8px;background:#fff"></iframe>`;
+    return;
+  }
+  if (active === -1) {
+    $("view").innerHTML = `<p class="muted">Findings from ${results.length} queries on this node.</p>` + findingsView(allFindings(), true);
+    return;
+  }
+  const r = results[active];
+  if (!r) { $("view").innerHTML = `<p class="muted">${LIVE ? "Choose a query and press Run." : "No results in this snapshot."}</p>`; return; }
+  if (r.error) { $("view").innerHTML = `<div class="err">${esc(r.error)}</div>`; return; }
+
+  const views = [];
+  if (r.findings) views.push(["findings", `Findings (${r.findings.length})`]);
+  views.push(["table", "Table"], ["tree", "Tree"]);
+  if (texts(r.data).length) views.push(["text", "Text"]);
+  views.push(["raw", "Raw JSON"]);
+  if (!views.some(v => v[0] === view)) view = views[0][0];
+
+  let body = "";
+  if (view === "findings") body = findingsView(r.findings);
+  else if (view === "table") body = tableView(r.data);
+  else if (view === "tree") body = `<div class="tw" style="padding:8px">${treeNode("response", r.data, 0)}</div>`;
+  else if (view === "text") body = texts(r.data).map(t => `<pre>${esc(t)}</pre>`).join("");
+  else body = `<pre>${esc(JSON.stringify(r.data, null, 2))}</pre>`;
+
+  $("view").innerHTML = `<div class="tabs">${views.map(([k, l]) => `<button data-v="${k}" class="${view === k ? "on" : ""}">${l}</button>`).join("")}${view === "table" && tableReady ? '<button id="csv">Export CSV</button>' : ""}</div>` + body;
+  if (view === "table" && tableReady) drawRows();
+}
+
+function closeResult(i) {
+  results.splice(i, 1);
+  if (i < active) active -= 1;
+  if (active >= results.length) active = Math.max(0, results.length - 1);
+  render();
+}
+
+// Findings from every result, each tagged with the query it came from.
+function allFindings() {
+  return results.flatMap(r => (r.findings || []).map(x => ({ ...x, query: r.label || r.query || "" })));
+}
+
+function findingsView(f, withQuery = false) {
+  const c = { critical: 0, warning: 0, info: 0 };
+  f.forEach(x => { c[x.severity] = (c[x.severity] || 0) + 1; });
+  const head = `<div class="row"><span class="pill crit">Critical ${c.critical}</span><span class="pill warn">Warning ${c.warning}</span><span class="pill">Info ${c.info}</span></div>`;
+  if (!f.length) return head + `<p class="muted">Nothing wrong found in this response.</p>`;
+  const cls = s => (s === "critical" ? "crit" : s === "warning" ? "warn" : "");
+  // Root causes: findings that share a cause (e.g. one port down) are listed once, with the objects they affect.
+  const groups = {};
+  f.forEach(x => { if (x.cause) (groups[x.cause] = groups[x.cause] || new Set()).add(x.object.split(", oper-")[0]); });
+  const causes = Object.entries(groups);
+  const causeBlock = causes.length
+    ? `<h3>Root causes</h3><ul>${causes.map(([c, objs]) => `<li><b>${esc(c)}</b> affects: ${[...objs].map(o => esc(o)).join("; ")}</li>`).join("")}</ul>`
+    : "";
+  return head + causeBlock + `<div class="tw"><table><thead><tr><th>Severity</th>${withQuery ? "<th>Query</th>" : ""}<th>Object</th><th>Field</th><th>Finding</th></tr></thead><tbody>${
+    f.map(x => `<tr><td><span class="pill ${cls(x.severity)}">${esc(x.severity)}</span></td>${withQuery ? `<td>${esc(x.query || "")}</td>` : ""}<td class="mono">${esc(x.object)}</td><td class="mono">${esc(x.field)}</td><td style="white-space:normal">${esc(x.message)}</td></tr>`).join("")
+  }</tbody></table></div>`;
+}
+
+function tableView(data) {
+  const found = lists(data);
+  tableReady = found.length > 0;
+  if (!tableReady) {
+    // Single-object response (e.g. chassis, system): show its fields as one row.
+    let obj = data;
+    while (obj && typeof obj === "object" && !Array.isArray(obj) && Object.keys(obj).length === 1) {
+      obj = obj[Object.keys(obj)[0]];
+    }
+    if (!obj || typeof obj !== "object" || Array.isArray(obj)) {
+      return `<p class="muted">This response has no fields to show as a table. Use Tree or Raw JSON.</p>`;
+    }
+    tableReady = true;
+    currentRows = Object.entries(flatten(obj)).map(([field, value]) => ({ field, value }));
+    currentCols = ["field", "value"];
+    return `<div class="row"><span class="muted" id="count"></span></div>
+      <div class="tw"><table id="tbl"></table></div>`;
+  }
+  if (tableSel >= found.length) tableSel = 0;
+  currentRows = found[tableSel].rows.map(r => flatten(r));
+  currentCols = [];
+  const seen = new Set();
+  currentRows.forEach(r => Object.keys(r).forEach(k => { if (!seen.has(k)) { seen.add(k); currentCols.push(k); } }));
+  return `<div class="row"><label>List <select id="tsel">${found.map((f, i) =>
+      `<option value="${i}" ${i === tableSel ? "selected" : ""}>${esc(f.path)} (${f.rows.length})</option>`).join("")}</select></label>
+    <input id="filter" placeholder="filter rows" value="${esc(filter)}" size="28">
+    <span class="muted" id="count"></span></div>
+    <div class="tw"><table id="tbl"></table></div>`;
+}
+function drawRows() {
+  const f = filter.toLowerCase();
+  filteredRows = currentRows.filter(r => !f || JSON.stringify(r).toLowerCase().includes(f));
+  const shown = filteredRows.slice(0, 2000);
+  $("tbl").innerHTML = `<thead><tr>${currentCols.map(c => `<th>${esc(c)}</th>`).join("")}</tr></thead>
+    <tbody>${shown.map(r => `<tr>${currentCols.map(c => `<td class="mono">${esc(r[c] ?? "")}</td>`).join("")}</tr>`).join("")}</tbody>`;
+  $("count").textContent = `${filteredRows.length} of ${currentRows.length} rows` +
+    (filteredRows.length > shown.length ? " (showing first 2000; export CSV for all)" : "");
+}
+function treeNode(key, v, depth) {
+  if (v && typeof v === "object") {
+    const isArr = Array.isArray(v), n = isArr ? v.length : Object.keys(v).length;
+    return `<details ${depth < 2 ? "open" : ""}><summary>${esc(key)} <span class="muted">${isArr ? `[${n}]` : `{${n}}`}</span></summary>` +
+      Object.entries(v).map(([k, x]) => treeNode(k, x, depth + 1)).join("") + `</details>`;
+  }
+  return `<div class="leaf">${esc(key)}: ${esc(JSON.stringify(v))}</div>`;
+}
+function exportCsv() {
+  const q = v => `"${String(v ?? "").replace(/"/g, '""')}"`;
+  const lines = [currentCols.map(q).join(","), ...filteredRows.map(r => currentCols.map(c => q(r[c])).join(","))];
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob([lines.join("\n")], { type: "text/csv" }));
+  a.download = "nokia_view.csv";
+  a.click();
+}
+
+// Event delegation for controls rendered inside #view.
+$("view").addEventListener("click", e => {
+  const b = e.target.closest("button");
+  if (!b) return;
+  if (b.dataset.v) { view = b.dataset.v; render(); }
+  else if (b.id === "csv") exportCsv();
+});
+$("view").addEventListener("change", e => {
+  if (e.target.id === "tsel") { tableSel = +e.target.value; filter = ""; render(); }
+});
+$("view").addEventListener("input", e => {
+  if (e.target.id === "filter") { filter = e.target.value; drawRows(); }
+});
+
+buildControls();
+render();
+</script>
+</body>
+</html>

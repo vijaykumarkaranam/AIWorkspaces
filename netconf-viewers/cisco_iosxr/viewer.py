@@ -1,0 +1,360 @@
+"""Cisco IOS-XR live viewer: runs the queries one by one, shows each result as table tabs, then builds the report.
+
+Run (run_viewer.bat does this):
+  python viewer.py --port 8766
+Then open http://127.0.0.1:8766/
+
+Endpoints:
+  GET  /                  the control page
+  GET  /api/devices       routers from the ROUTERS list
+  GET  /api/queries       query ids and labels, in run order
+  POST /api/run-query     {"node": "10.54.174.13", "query": "cisco-cpu"}  runs one query, saves it, returns its tables
+  POST /api/build-report  builds results\\cisco_report.html from the newest saved results
+  GET  /report            the last built report
+
+Every query is a GET through ODL. Nothing is changed on the routers.
+"""
+import argparse
+import json
+import os
+import re
+import sys
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from urllib.parse import urlparse
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, HERE)
+
+from odl_client import OdlClient  # noqa: E402
+import queries  # noqa: E402
+import run_queries  # noqa: E402
+import build_cisco_report as bcr  # noqa: E402
+
+STYLE_FILE = os.path.join(HERE, "report_style.css")  # copy of the Nokia report style, kept beside this script
+ROUTERS = os.environ.get("ROUTERS", "10.54.174.13 10.54.172.1").split()
+IP_RE = re.compile(r"^[0-9A-Za-z.\-:_]{1,64}$")
+CLIENT = None  # set in main()
+
+PAGE = r"""<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Cisco IOS-XR viewer</title>
+<style>__CSS__
+.bar{display:flex;gap:8px;align-items:center;flex-wrap:wrap;padding:14px 20px;height:auto;overflow:visible;background:none;border-radius:0;min-width:0;box-shadow:none}
+.bar select{font:inherit;padding:6px 9px;border:1px solid var(--line);border-radius:6px;background:var(--panel);color:var(--ink)}
+.bar button,.tabs button,.toolbar button{font:inherit;padding:7px 12px;border:1px solid var(--glass-line);border-radius:8px;background:var(--glass-strong);color:var(--ink);cursor:pointer}
+.bar button.primary{background:var(--accent);color:#fff;border-color:var(--accent)}
+.bar button:disabled{opacity:.5;cursor:wait}
+.toolbar button.on,.tabs button.on{background:var(--accent);color:#fff;border-color:var(--accent)}
+#status{padding:0 20px;color:var(--muted)}
+.tabs{display:flex;flex-wrap:wrap;gap:6px;padding:12px 20px 0}
+.tabs button{padding:6px 10px;font-size:13px}
+.tabs small{opacity:.75;margin-left:4px}
+#view{padding:12px 20px 30px}
+#view pre{background:var(--glass-strong);border:1px solid var(--glass-line);border-radius:10px;padding:12px;white-space:pre-wrap;word-break:break-word;font-size:12px;max-height:50vh;overflow:auto}
+#view iframe{width:100%;height:80vh;border:1px solid var(--glass-line);border-radius:10px;background:#fff}
+#view .toolbar{margin:8px 0;flex-wrap:wrap}
+#view .toolbar input,#view .toolbar select{font:inherit;padding:6px 9px;border:1px solid var(--line);border-radius:6px;background:var(--panel);color:var(--ink);min-width:240px}
+#view tbody tr{cursor:pointer}
+</style></head>
+<body>
+<header><h1>Cisco IOS-XR viewer</h1><span class="meta" id="meta"></span></header>
+<div class="bar">
+  <label>Router <select id="dev"></select></label>
+  <button class="primary" id="runOne">Run all queries</button>
+  <button id="runEvery">Run all routers</button>
+  <button id="build">Build report</button>
+  <button id="clear">Clear tabs</button>
+</div>
+<div id="status">Pick a router, then press Run all queries. Each query opens as a tab with its tables when it finishes.</div>
+<div class="tabs" id="tabs"></div>
+<div id="view"></div>
+<script>
+const $ = id => document.getElementById(id);
+const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;"}[c]));
+const OK = /^(up|active|act|ok|connected|true|enabled|running|full|established|alive)$/i;
+const BAD = /^(down|inactive|false|disabled|error|idle|not-active|unreachable|critical)$/i;
+const MAX_ROWS = 1000;
+let devices = [], queries = [];
+let tabs = [];          // {node, id, label, ok, tables:[{title,kind,columns,rows,raw,count}], ti, error, mode, q}
+let active = -1;        // index into tabs
+let reportReady = false, showReport = false;
+
+function say(t){ $("status").textContent = t; }
+function setBusy(b){ document.querySelectorAll("button,select").forEach(x => x.disabled = b); }
+
+async function post(url, body){
+  const r = await fetch(url, {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(body || {})});
+  const j = await r.json();
+  if (!r.ok) throw new Error(j.error || ("HTTP " + r.status));
+  return j;
+}
+
+function cell(v){
+  if (v === null || v === undefined) return '<span class="muted">—</span>';
+  if (typeof v === "boolean") v = String(v);
+  if (typeof v === "number") return v.toLocaleString();
+  const s = String(v);
+  if (OK.test(s)) return `<span class="pill p-ok">${esc(s)}</span>`;
+  if (BAD.test(s)) return `<span class="pill p-bad">${esc(s)}</span>`;
+  return esc(s);
+}
+
+function curTable(t){ return t.tables[t.ti || 0]; }
+
+function tableHTML(t){
+  const T = curTable(t);
+  const q = (t.q || "").toLowerCase();
+  let idx = T.rows.map((r, i) => i);
+  if (q) idx = idx.filter(i => T.rows[i].c.join(" ").toLowerCase().includes(q));
+  const shown = idx.slice(0, MAX_ROWS);
+  const head = T.columns.map(c => `<th>${esc(c)}</th>`).join("");
+  const body = shown.map(i =>
+    `<tr data-row="${i}">${T.rows[i].c.map(v => `<td>${cell(v)}</td>`).join("")}</tr>`).join("");
+  const note = idx.length > MAX_ROWS ? ` (first ${MAX_ROWS} shown)` : "";
+  return `<div class="tw"><table><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table></div>
+    <p class="muted small">${idx.length} of ${T.rows.length} rows${note}. Click a row to see the full record below.</p>
+    <pre id="detail">Click a row to see the full record.</pre>`;
+}
+
+function render(){
+  const multi = new Set(tabs.map(t => t.node)).size > 1;
+  let bar = tabs.map((t, i) => {
+    const label = (multi ? t.node + " · " : "") + t.label;
+    const n = t.ok ? `${t.tables.length} tables` : "no data";
+    return `<button data-tab="${i}" class="${!showReport && i === active ? "on" : ""}">${esc(label)}
+      <small>${n}</small></button>`;
+  }).join("");
+  if (reportReady) bar += `<button data-tab="report" class="${showReport ? "on" : ""}">Device report</button>`;
+  $("tabs").innerHTML = bar;
+
+  let view = "";
+  if (showReport && reportReady) {
+    view = `<iframe src="/report?ts=${Date.now()}"></iframe>`;
+  } else if (active >= 0 && tabs[active]) {
+    const t = tabs[active];
+    if (!t.ok) {
+      view = `<h3>${esc(t.node)} · ${esc(t.label)}</h3><pre>${esc(t.error)}</pre>`;
+    } else {
+      const mode = t.mode || "table";
+      const picker = t.tables.length > 1
+        ? `<select id="tsel">${t.tables.map((T, i) =>
+            `<option value="${i}" ${i === (t.ti || 0) ? "selected" : ""}>${esc(T.title)} (${T.count})</option>`).join("")}</select>`
+        : "";
+      view = `<h3>${esc(t.node)} · ${esc(t.label)}</h3>
+        <div class="toolbar">
+          <button data-mode="table" class="${mode === "table" ? "on" : ""}">Table</button>
+          <button data-mode="json" class="${mode === "json" ? "on" : ""}">JSON</button>
+          ${picker}
+          <input id="flt" placeholder="Filter rows" value="${esc(t.q || "")}">
+        </div>` +
+        (mode === "table"
+          ? `<div id="tbl">${tableHTML(t)}</div>`
+          : `<pre>${esc(JSON.stringify(t.data, null, 2).slice(0, 400000))}</pre>`);
+    }
+  }
+  $("view").innerHTML = view;
+}
+
+async function runRouter(node){
+  for (let i = 0; i < queries.length; i++) {
+    const q = queries[i];
+    say(`${node}: query ${i + 1} of ${queries.length} · ${q.label}`);
+    const r = await post("/api/run-query", {node, query: q.id});
+    tabs.push({node, id: q.id, label: q.label, ok: r.ok, tables: r.tables || [], ti: 0,
+               data: r.data, error: r.error, mode: "table", q: ""});
+    active = tabs.length - 1;
+    showReport = false;
+    render();
+  }
+}
+
+async function buildReport(){
+  say("Building report from the saved results...");
+  const j = await post("/api/build-report");
+  reportReady = true;
+  showReport = true;
+  render();
+  say(`Report built (${j.megabytes} MB). Opened in the Device report tab.`);
+}
+
+function reset(){ tabs = []; active = -1; reportReady = false; showReport = false; render(); }
+
+async function guard(fn){
+  setBusy(true);
+  try { await fn(); }
+  catch (e) { say("Error: " + e.message); }
+  finally { setBusy(false); }
+}
+
+$("runOne").onclick = () => guard(async () => {
+  reset();
+  await runRouter($("dev").value);
+  await buildReport();
+  say(`${$("dev").value} done. ${tabs.filter(t => t.ok).length} queries with data, ${tabs.filter(t => !t.ok).length} without. Report is in the Device report tab.`);
+});
+$("runEvery").onclick = () => guard(async () => {
+  reset();
+  for (const n of devices) await runRouter(n);
+  await buildReport();
+  say("All routers done. Report is in the Device report tab.");
+});
+$("build").onclick = () => guard(buildReport);
+$("clear").onclick = () => { reset(); say("Tabs cleared."); };
+
+$("tabs").addEventListener("click", e => {
+  const b = e.target.closest("button[data-tab]");
+  if (!b) return;
+  if (b.dataset.tab === "report") showReport = true;
+  else { active = +b.dataset.tab; showReport = false; }
+  render();
+});
+
+document.addEventListener("click", e => {
+  const m = e.target.closest("button[data-mode]");
+  if (m && tabs[active]) { tabs[active].mode = m.dataset.mode; render(); return; }
+  const tr = e.target.closest("tr[data-row]");
+  if (tr && tabs[active]) {
+    const t = tabs[active];
+    const i = +tr.dataset.row;
+    const d = $("detail");
+    if (d) d.textContent = JSON.stringify(curTable(t).rows[i].raw, null, 2).slice(0, 200000);
+  }
+});
+
+document.addEventListener("change", e => {
+  if (e.target.id === "tsel" && tabs[active]) {
+    tabs[active].ti = +e.target.value;
+    tabs[active].q = "";
+    render();
+  }
+});
+
+document.addEventListener("input", e => {
+  if (e.target.id === "flt" && tabs[active]) {
+    const t = tabs[active];
+    t.q = e.target.value;
+    const tbl = $("tbl");
+    if (tbl) tbl.innerHTML = tableHTML(t);
+  }
+});
+
+Promise.all([fetch("/api/devices").then(r => r.json()), fetch("/api/queries").then(r => r.json())]).then(([d, q]) => {
+  devices = d.devices;
+  queries = q.queries;
+  $("dev").innerHTML = devices.map(x => `<option value="${esc(x)}">${esc(x)}</option>`).join("");
+  $("meta").textContent = "ODL: " + d.odl + " · " + queries.length + " queries";
+});
+</script>
+</body></html>
+"""
+
+
+def read_json(path):
+    with open(path, encoding="utf-8") as fh:
+        return json.load(fh)
+
+
+class Handler(BaseHTTPRequestHandler):
+    def _send(self, code, body, content_type="application/json; charset=utf-8"):
+        data = body if isinstance(body, bytes) else body.encode("utf-8")
+        self.send_response(code)
+        self.send_header("Content-Type", content_type)
+        self.send_header("Content-Length", str(len(data)))
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        self.wfile.write(data)
+
+    def _json(self, code, obj):
+        self._send(code, json.dumps(obj, default=str))
+
+    def _body(self):
+        length = int(self.headers.get("Content-Length") or 0)
+        return json.loads(self.rfile.read(length) or b"{}")
+
+    def do_GET(self):
+        path = urlparse(self.path).path
+        if path in ("/", "/index.html"):
+            self._send(200, PAGE_HTML, "text/html; charset=utf-8")
+        elif path == "/api/devices":
+            self._json(200, {"devices": ROUTERS, "odl": CLIENT.base})
+        elif path == "/api/queries":
+            self._json(200, {"queries": [{"id": q, "label": m["label"]} for q, m in queries.QUERIES.items()]})
+        elif path == "/report":
+            if not os.path.isfile(bcr.OUT):
+                self._json(404, {"error": "No report built yet. Run a router or press Build report first."})
+            else:
+                with open(bcr.OUT, "rb") as fh:
+                    self._send(200, fh.read(), "text/html; charset=utf-8")
+        else:
+            self._json(404, {"error": "not found"})
+
+    def do_POST(self):
+        path = urlparse(self.path).path
+        try:
+            if path == "/api/run-query":
+                self._run_query(self._body())
+            elif path == "/api/build-report":
+                self._build_report()
+            else:
+                self._json(404, {"error": "not found"})
+        except Exception as exc:  # return the problem to the page instead of dropping the connection
+            self._json(500, {"error": str(exc)})
+
+    def _run_query(self, req):
+        node, qid = req.get("node", ""), req.get("query", "")
+        if node not in ROUTERS or not IP_RE.match(node):
+            self._json(400, {"error": f"unknown router {node!r}; expected one of {ROUTERS}"})
+            return
+        if qid not in queries.QUERIES:
+            self._json(400, {"error": f"unknown query {qid!r}"})
+            return
+        run_queries.run_query(CLIENT, node, qid)  # prints progress and saves the result file
+        entry = bcr.latest_per_query(os.path.join(bcr.RESULTS, node))[qid]
+        sec = bcr.make_section(qid, entry)  # same tables as the report
+        if sec["status"] == "ok":
+            tables = [{"title": t["title"], "kind": t["kind"], "count": t["count"],
+                       "columns": t["columns"],
+                       "rows": [{"c": r["c"]} for r in t["rows"]],
+                       "raw": [r["raw"] for r in t["rows"]]}
+                      for t in sec["tables"]]
+            self._json(200, {"ok": True, "tables": tables, "data": read_json(entry[1]).get("data")})
+        else:
+            self._json(200, {"ok": False, "error": sec["error"]})
+
+    def _build_report(self):
+        bcr.main()  # writes results\cisco_report.html and prints the path
+        self._json(200, {"file": os.path.basename(bcr.OUT),
+                         "megabytes": round(os.path.getsize(bcr.OUT) / 1e6, 2)})
+
+    def log_message(self, fmt, *args):
+        sys.stderr.write("%s - %s\n" % (self.address_string(), fmt % args))
+
+
+def page_html():
+    with open(STYLE_FILE, encoding="utf-8-sig") as fh:
+        css = fh.read()
+    return PAGE.replace("__CSS__", css)
+
+
+PAGE_HTML = ""
+
+
+def main():
+    global CLIENT, PAGE_HTML
+    ap = argparse.ArgumentParser(description="Cisco IOS-XR live viewer (ODL RESTCONF backend)")
+    ap.add_argument("--host", default="127.0.0.1")
+    ap.add_argument("--port", type=int, default=8766)
+    ap.add_argument("--odl", default=None, help="ODL base URL (default: $ODL_BASE)")
+    a = ap.parse_args()
+    CLIENT = OdlClient(base=a.odl)
+    PAGE_HTML = page_html()
+    server = ThreadingHTTPServer((a.host, a.port), Handler)
+    print(f"Viewer on http://{a.host}:{a.port}/  ODL: {CLIENT.base}  routers: {', '.join(ROUTERS)}")
+    try:
+        server.serve_forever()
+    except KeyboardInterrupt:
+        print("stopped")
+
+
+if __name__ == "__main__":
+    main()
