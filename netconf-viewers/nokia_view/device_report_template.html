@@ -166,6 +166,7 @@ html{scrollbar-width:auto;scrollbar-color:rgba(124,92,255,.55) transparent}
 ::-webkit-scrollbar-thumb{background:var(--grad);border-radius:10px;border:3px solid transparent;background-clip:padding-box;min-height:40px}
 ::-webkit-scrollbar-thumb:hover{background:linear-gradient(135deg,#7c5cff,#14b8a6);background-clip:padding-box}
 ::-webkit-scrollbar-corner{background:transparent}
+/*__E2E_CSS__*/
 </style>
 </head>
 <body>
@@ -180,6 +181,7 @@ html{scrollbar-width:auto;scrollbar-color:rgba(124,92,255,.55) transparent}
 <aside id="drawer"><div class="grip" id="d-grip" title="Drag to resize"></div><div class="hd"><h2 id="d-title"></h2><button class="x mx" id="d-max" title="Maximize / restore">Maximize</button><button class="x" id="d-close">Close</button></div><div class="bd" id="d-body"></div></aside>
 
 <script>
+/*__E2E_JS__*/
 const D = __DATA__;
 const M = D.model, SRC = D.src;
 const $ = (s, el = document) => el.querySelector(s);
@@ -256,6 +258,7 @@ function go(ref){ const [k, ...rest] = ref.split("|"); const v = rest.join("|");
   else if(k==="cust" && custById[v]) showCustomer(custById[v]);
   else if(k==="trace" && svcByKey[v]){ switchTab("trace"); $("#trace-sel").value = v; renderTrace(); $("#drawer").classList.remove("on"); }
   else if(k==="nbr"){ const n = M.neighbors.find(x=>x.name===v); if(n) showNeighbor(n); }
+  else if(k==="tab"){ switchTab(v); window.scrollTo(0, 0); }
 }
 
 /* ---------- table ---------- */
@@ -401,7 +404,7 @@ function showNeighbor(nb){
 const TABS = [
   ["overview","Overview"],["issues","Issues",M.issues.filter(i=>i.sev!=="info").length],["ports","Ports",M.ports.length],["optics","Optics"],
   ["links","Neighbours & LAGs",M.neighbors.length],["interfaces","IP interfaces",M.interfaces.length],["services","Services",M.services.length],
-  ["saps","SAPs",M.saps.length],["sdps","SDPs",M.sdps.length],["lsps","LSPs",M.lsps.length],["trace","Service trace"],
+  ["saps","SAPs",M.saps.length],["sdps","SDPs",M.sdps.length],["lsps","LSPs",M.lsps.length],["trace","Service trace"],["e2e","End-to-end services",(M.e2e&&M.e2e.services)?M.e2e.services.length:null],
   ["customers","Customers",M.customers.length],["pwt","PW templates",M.pwTemplates.length],
   ["live","Live findings",M.live.findings.filter(f=>f.severity!=="info").length],["health","Hardware & system"],["routing","Routing & protocols"],
   ["fdb","MAC table",(M.live.fdb||{}).total||0],["queries","Query status",M.live.queries.length],["chassis","Chassis layout"],["raw","All raw data"]];
@@ -562,6 +565,10 @@ R.trace = el => {
   el.innerHTML = `<h2>End-to-end service trace</h2><p class="lead">Pick a service to see its whole chain: customer, access port and handoff, the service, each SDP binding, the LSP and its signalled hops to the far-end router.</p><div class="toolbar"><select id="trace-sel" style="min-width:420px">${M.services.map(s=>`<option value="${svcKey(s)}">${s.type} ${s.id} · ${esc(s.name)} · ${s.oper||"?"}</option>`).join("")}</select></div><div id="trace-out"></div>`;
   $("#trace-sel").onchange = renderTrace; renderTrace();
 };
+R.e2e = el => {
+  el.innerHTML = `<h2>End-to-end services</h2><div id="e2e-root"></div>`;
+  E2E.render($("#e2e-root", el), M.e2e);
+};
 function node(t, n, body, go){ return `<div class="node" ${go?`data-go="${esc(go)}" style="cursor:pointer"`:""}><div class="t">${t}</div><div class="n">${n}</div>${body||""}</div>`; }
 function renderTrace(){
   const s = svcByKey[$("#trace-sel").value]; if(!s) return; const c = custById[String(s.customer)];
@@ -579,6 +586,9 @@ function renderTrace(){
         (sd ? node("SDP "+sd.id, esc(sd.farEndName||sd.farEnd), `<div>${pill(sd.oper)} keep-alive ${pill(sd.kaOper)}</div><div class="mono muted">${esc(sd.farEnd)}</div>`, "sdp|"+sd.id) : node("SDP", esc(b.sdpId), '<div class="muted">not in SDP data</div>')) +
         (l ? `<span class="arrow">→</span>${node("LSP", esc(l.name), `<div>${pill(l.oper)} metric ${esc(l.metric)}</div><div class="muted">${l.egressLag?("via "+esc(l.egressLag)):""} ${fmtN(l.transitions)} transitions</div>`, "lsp|"+l.name)}<span class="arrow">→</span><div class="node" style="max-width:none"><div class="t">Signalled path (PCEP ERO)</div>${eroHtml(l)}</div>` : sd&&sd.lspName ? `<span class="arrow">→</span>${node("LSP", esc(sd.lspName), '<div class="muted">not in LSP state</div>')}` : "") + `</div>`; } }
   else if(s.type!=="vprn") h += `<p class="muted">No SDP bindings: the service is local to this router.</p>`;
+  const rec = E2E.recordFor(M.e2e, svcKey(s));
+  if(rec && rec.legs.length) h += `<h3>Far ends <span class="muted small">end-to-end status: ${esc(rec.status)}</span></h3><div class="e2e">${E2E.issuesHTML(rec)}${E2E.legsHTML(rec, M.e2e)}</div>
+    <p class="small muted">Full list of services with their far ends: <span class="chip link" data-go="tab|e2e">End-to-end services</span></p>`;
   $("#trace-out").innerHTML = h;
 }
 R.customers = el => {

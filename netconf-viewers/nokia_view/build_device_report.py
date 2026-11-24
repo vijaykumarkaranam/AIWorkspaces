@@ -557,6 +557,43 @@ def store_default_node():
     return max(folders, key=lambda f: os.path.getmtime(os.path.join(store.STORE, f)), default="")
 
 
+def _e2e():
+    """The shared end-to-end package (netconf-viewers/e2e), next to this folder."""
+    parent = os.path.dirname(HERE)
+    if parent not in sys.path:
+        sys.path.insert(0, parent)
+    import e2e.report
+    import e2e.sources
+    import e2e.stitch
+    return e2e
+
+
+def e2e_model(node):
+    """End-to-end services of this router, stitched to far ends saved in the Nokia store or Cisco results."""
+    try:
+        sys.path.insert(0, HERE)
+        import store
+        e = _e2e()
+        model = e.stitch.build_report_model(node, e.sources.Inventory(nokia_dir=store.STORE))
+        c = model.get("counts", {})
+        print(f"End-to-end: {c.get('services', 0)} services, {c.get('up', 0)} up, {c.get('down', 0)} down, "
+              f"{c.get('farEndsMissing', 0)} of {c.get('farEnds', 0)} far-end PEs without saved data")
+        return model
+    except Exception as exc:  # the rest of the report still builds
+        print(f"End-to-end view not built: {exc}")
+        return {"node": node, "error": f"End-to-end view not built: {exc}", "services": [], "farEnds": [], "counts": {}}
+
+
+def e2e_inject(page):
+    try:
+        return _e2e().report.inject(page)
+    except Exception as exc:
+        print(f"End-to-end view assets not added: {exc}")
+        return page.replace("/*__E2E_CSS__*/", "").replace(
+            "/*__E2E_JS__*/", "const E2E={render:(el)=>{el.textContent='End-to-end view unavailable.'},"
+                              "recordFor:()=>null,legsHTML:()=>'',issuesHTML:()=>'',pathsHTML:()=>''};")
+
+
 def build(folder, out_path=None, node=None):
     files = {
         "port": find_file(folder, ("portstatus",), ("port", "state")),
@@ -576,7 +613,8 @@ def build(folder, out_path=None, node=None):
         "mpls": "MPLS LSP state (nokia-state router mpls lsp)",
     }
     # Prefer the newest stored run of each query; fall back to the response file in the folder.
-    stored = store_latest_raw(node or store_default_node())
+    store_node = node or store_default_node()
+    stored = store_latest_raw(store_node)
     store_for = {"port": "port-state", "svccfg": "config-services", "epipe": "epipe-state", "vpls": "vpls-state",
                  "sdp": "sdp-state", "rif": "router-interface-state", "mpls": "mpls-lsp-state"}
     for k, path in files.items():
@@ -1085,7 +1123,7 @@ def build(folder, out_path=None, node=None):
         "routers": sorted({i["router"] for i in interfaces}),
         "asOf": as_of.isoformat(timespec="minutes") + "Z",
         "built": dt.datetime.now().isoformat(timespec="minutes"),
-        "counterClear": Counter(x["countersSince"] for x in saps_all if x["countersSince"]).most_common(1)[0][0] if saps_all else None,
+        "counterClear": next(iter(Counter(x["countersSince"] for x in saps_all if x["countersSince"]).most_common(1)), (None,))[0],
         "protocols": sorted({p for i in interfaces for p in str(i["protocols"] or "").split()}),
         "egressSummary": dict(eg),
     }
@@ -1103,10 +1141,11 @@ def build(folder, out_path=None, node=None):
              "neighbors": neighbors, "interfaces": interfaces, "services": services, "saps": saps_all,
              "sdps": list(sdps.values()), "lsps": lsps, "pcepOnly": pcep_only, "customers": list(customers.values()),
              "pwTemplates": pw_templates, "issues": issues, "pcepLoaded": bool(pcep_rows),
-             "live": {k: live[k] for k in ("queries", "findings", "routing", "health", "fdb")}}
+             "live": {k: live[k] for k in ("queries", "findings", "routing", "health", "fdb")},
+             "e2e": e2e_model(store_node or device_ip or "")}
 
     with open(os.path.join(HERE, "device_report_template.html"), encoding="utf-8") as fh:
-        tpl = fh.read()
+        tpl = e2e_inject(fh.read())
     payload = json.dumps({"model": model, "src": src}, separators=(",", ":"), default=str).replace("</", "<\\/")
     html = tpl.replace("__DATA__", payload).replace("__TITLE__", f"{device_name} device report")
     out_path = out_path or os.path.join(folder, f"{device_name}_device_report.html")

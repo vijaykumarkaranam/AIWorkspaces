@@ -273,6 +273,45 @@ def count_kpi(secs, qid, label, tab):
     return {"label": label, "value": value, "sub": sub, "tab": tab}
 
 
+def _e2e():
+    """The shared end-to-end package (netconf-viewers/e2e), next to this folder."""
+    import sys
+    parent = os.path.dirname(HERE)
+    if parent not in sys.path:
+        sys.path.insert(0, parent)
+    import e2e.report
+    import e2e.sources
+    import e2e.stitch
+    return e2e
+
+
+_INVENTORY = {}
+
+
+def e2e_model(node):
+    """End-to-end services of this router, stitched to far ends saved here or in the Nokia store."""
+    try:
+        e = _e2e()
+        inv = _INVENTORY.get("inv") or _INVENTORY.setdefault("inv", e.sources.Inventory(cisco_dir=RESULTS))
+        model = e.stitch.build_report_model(node, inv)
+        c = model.get("counts", {})
+        print(f"{node} end-to-end: {c.get('services', 0)} services, {c.get('up', 0)} up, {c.get('down', 0)} down, "
+              f"{c.get('farEndsMissing', 0)} of {c.get('farEnds', 0)} far-end PEs without saved data")
+        return model
+    except Exception as exc:  # the rest of the report still builds
+        print(f"{node}: end-to-end view not built: {exc}")
+        return {"node": node, "error": f"End-to-end view not built: {exc}", "services": [], "farEnds": [], "counts": {}}
+
+
+def e2e_inject(page):
+    try:
+        return _e2e().report.inject(page)
+    except Exception as exc:
+        print(f"End-to-end view assets not added: {exc}")
+        return page.replace("/*__E2E_CSS__*/", "").replace(
+            "/*__E2E_JS__*/", "const E2E={render:(el)=>{el.textContent='End-to-end view unavailable.'}};")
+
+
 def build_device(node, node_dir):
     found = latest_per_query(node_dir)
     secs = {q: make_section(q, e) for q, e in found.items()}
@@ -283,8 +322,12 @@ def build_device(node, node_dir):
     summary = [{"id": s["id"], "title": s["title"], "status": s["status"], "when": s["when"],
                 "count": s["count"], "tab": tab_of(s["id"])} for s in secs.values()]
     summary.sort(key=lambda x: (x["tab"], x["title"]))
+    e2e = e2e_model(node)
     tabs = [{"id": "overview", "label": "Overview", "count": ok, "lead": "Key figures for this device.",
-             "sections": []}]
+             "sections": []},
+            {"id": "e2e", "label": "End-to-end services", "count": len(e2e.get("services", [])),
+             "lead": "Each L2VPN service followed from the CE, through this router and its pseudowires, "
+                     "to the far-end PE and its CE.", "sections": []}]
     used = set()
     for tid, label, lead, ids in TABS:
         sections = [secs[q] for q in ids if q in secs]
@@ -295,7 +338,7 @@ def build_device(node, node_dir):
     if extra:
         tabs.append({"id": "other", "label": "Other", "count": len(extra), "lead": "Queries not in a group.",
                      "sections": extra})
-    return {"node": node, "kpis": kpis, "summary": summary, "tabs": tabs}
+    return {"node": node, "kpis": kpis, "summary": summary, "tabs": tabs, "e2e": e2e}
 
 
 def tab_of(qid):
@@ -308,7 +351,8 @@ def tab_of(qid):
 PAGE = r"""<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Cisco IOS-XR device report</title>
-<style>__CSS__</style></head>
+<style>__CSS__
+/*__E2E_CSS__*/</style></head>
 <body>
 <header>
   <h1>Cisco IOS-XR device report</h1>
@@ -323,6 +367,7 @@ PAGE = r"""<!doctype html>
 <div class="bd" id="d-body"></div></aside>
 
 <script>
+/*__E2E_JS__*/
 const D = __DATA__;
 const MAX_ROWS = __MAX_ROWS__;
 const S = {};       // table state per section key
@@ -417,6 +462,9 @@ function render(){
   const t = d.tabs.find(x => x.id === ti) || d.tabs[0];
   if (t.id === "overview") {
     document.getElementById("main").innerHTML = overviewHTML(d);
+  } else if (t.id === "e2e") {
+    document.getElementById("main").innerHTML = `<h2>${esc(t.label)}</h2><div id="e2e-root"></div>`;
+    E2E.render(document.getElementById("e2e-root"), d.e2e);
   } else {
     document.getElementById("main").innerHTML = `<h2>${esc(t.label)}</h2><p class="lead">${esc(t.lead)}</p>` +
       t.sections.map(s => sectionHTML(s, di + "_" + s.id)).join("");
@@ -476,6 +524,7 @@ render();
 
 
 def main():
+    _INVENTORY.clear()  # pick up far ends saved since the last build (the viewer calls main() repeatedly)
     nodes = sorted(n for n in os.listdir(RESULTS) if os.path.isdir(os.path.join(RESULTS, n)))
     if not nodes:
         raise SystemExit(f"No device folders found in {RESULTS}")
@@ -484,7 +533,7 @@ def main():
     data = {"generated": dt.datetime.now().strftime("%Y-%m-%d %H:%M"),
             "devices": [build_device(n, os.path.join(RESULTS, n)) for n in nodes]}
     payload = json.dumps(data, ensure_ascii=False, default=str).replace("</", "<\\/")
-    page = PAGE.replace("__CSS__", css).replace("__DATA__", payload)
+    page = e2e_inject(PAGE.replace("__CSS__", css)).replace("__DATA__", payload)
     page = page.replace("__MAX_ROWS__", str(MAX_ROWS))
     with open(OUT, "w", encoding="utf-8") as fh:
         fh.write(page)

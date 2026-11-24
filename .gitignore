@@ -50,3 +50,4 @@ netconf-viewers/**/*_view.html
 netconf-viewers/**/cisco_report.html
 __pycache__/
 *.pyc
+netconf-viewers/e2e/loopback_map.json

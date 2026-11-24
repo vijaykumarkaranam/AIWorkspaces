@@ -32,14 +32,24 @@ import store  # noqa: E402
 REPORT = {"path": None}  # the last device report built from the stored runs
 
 
+def e2e_collect():
+    """The shared far-end collector (netconf-viewers/e2e/collect.py)."""
+    parent = os.path.dirname(HERE)
+    if parent not in sys.path:
+        sys.path.insert(0, parent)
+    import e2e.collect
+    return e2e.collect
+
+
 class Handler(BaseHTTPRequestHandler):
     client = None  # set in main()
 
-    def _build_report(self):
+    def _build_report(self, node=None):
         """Build the device report from the stored runs (same as build_device_report.py)."""
         try:
             import build_device_report as bdr
-            out = bdr.build(HERE)  # writes <device>_device_report.html here, from the newest stored device
+            # For the given node, else the newest stored device; writes <device>_device_report.html here.
+            out = bdr.build(HERE, node=node or None)
             REPORT["path"] = out
             self._json(200, {"file": os.path.basename(out), "location": out,
                              "megabytes": round(os.path.getsize(out) / 1e6, 2)})
@@ -118,12 +128,45 @@ class Handler(BaseHTTPRequestHandler):
                                 "error": str(exc)})
         self._json(200, {"results": results})
 
+    def _read_node(self):
+        length = int(self.headers.get("Content-Length") or 0)
+        body = json.loads(self.rfile.read(length) or b"{}")
+        node = body.get("node")
+        return queries.validate_node(node) if node else None
+
+    def _e2e_collect(self):
+        """Fetch the far-end PEs of one node's services (Nokia or Cisco) and save them for the report."""
+        try:
+            node = self._read_node()
+            if not node:
+                raise ValueError("enter a node id first")
+        except ValueError as exc:
+            self._json(400, {"error": str(exc)})
+            return
+        try:
+            collect = e2e_collect()
+            items = collect.collect_far_ends(node, collect.make_client(self.client.base),
+                                             collect.Inventory(nokia_dir=store.STORE))
+            self._json(200, {"node": node, "results": items})
+        except (OdlError, ValueError) as exc:
+            self._json(502, {"error": str(exc)})
+        except Exception as exc:  # report the problem to the page instead of dropping the connection
+            self._json(500, {"error": f"far-end collection failed: {exc}"})
+
     def do_POST(self):
         if urlparse(self.path).path == "/api/run-all":
             self._run_all()
             return
         if urlparse(self.path).path == "/api/build-report":
-            self._build_report()
+            try:
+                node = self._read_node()
+            except ValueError as exc:
+                self._json(400, {"error": str(exc)})
+                return
+            self._build_report(node)
+            return
+        if urlparse(self.path).path == "/api/e2e-collect":
+            self._e2e_collect()
             return
         if urlparse(self.path).path != "/api/run":
             self._json(404, {"error": "not found"})

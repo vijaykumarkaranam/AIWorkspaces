@@ -110,12 +110,14 @@ function buildControls() {
     <button class="primary" id="run">Run</button>
     <button id="runAll" title="Run every query for this node (takes a few minutes); then rebuilds the report">Run all</button>
     <button id="buildReport" title="Build the device report from the stored runs">Build report</button>
+    <button id="collectFar" title="Fetch the far-end PEs (Nokia or Cisco) of this node's services, then rebuild the report with the End-to-end services tab">Collect far ends</button>
     <button id="histBtn">Saved runs</button>
     <select id="hist"></select>
     <button id="openHist">Open</button>`;
   $("run").onclick = runQuery;
   $("runAll").onclick = runAll;
   $("buildReport").onclick = () => buildReport(false);
+  $("collectFar").onclick = collectFarEnds;
   $("loadNodes").onclick = loadNodes;
   $("histBtn").onclick = loadHistory;
   $("openHist").onclick = openHistory;
@@ -156,7 +158,8 @@ async function buildReport(quiet) {
   if (b) b.disabled = true;
   if (!quiet) $("status").textContent = "Building the device report from the stored runs…";
   try {
-    const r = await fetch("/api/build-report", { method: "POST" });
+    const node = ($("node") && $("node").value.trim()) || "";
+    const r = await fetch("/api/build-report", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ node }) });
     const j = await r.json();
     if (!r.ok) { $("status").innerHTML = `<div class="err">${esc(j.error)}</div>`; return false; }
     reportReady = true;
@@ -189,6 +192,28 @@ async function runAll() {
     $("status").textContent = `${ok} of ${j.results.length} queries ok. Each result is saved in the store.`;
     render();
     await buildReport(true);  // rebuild the device report from the new runs
+  } catch (e) {
+    $("status").innerHTML = `<div class="err">${esc(String(e))}</div>`;
+  } finally {
+    button.disabled = false;
+  }
+}
+
+async function collectFarEnds() {
+  const node = $("node").value.trim();
+  if (!node) { $("status").textContent = "Enter a node id first (its services must be saved: use Run all)."; return; }
+  const button = $("collectFar");
+  button.disabled = true;
+  $("status").textContent = `Fetching the far-end PEs of ${node}'s services through ODL. This can take several minutes…`;
+  try {
+    const r = await fetch("/api/e2e-collect", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ node }) });
+    const j = await r.json();
+    if (!r.ok) { $("status").innerHTML = `<div class="err">${esc(j.error)}</div>`; return; }
+    const done = j.results.filter(x => x.action === "fetched"), skipped = j.results.filter(x => x.action === "skip");
+    const errs = done.filter(x => (x.failed || []).length);
+    $("status").innerHTML = `Fetched ${done.length} far-end PE(s)` + (errs.length ? `, ${errs.length} with query errors` : "") +
+      (skipped.length ? `; skipped ${skipped.length}: ` + skipped.slice(0, 8).map(x => `${esc(x.ip)} (${esc(x.reason)})`).join("; ") : "") + ".";
+    await buildReport(true);  // the End-to-end services tab now includes the far ends
   } catch (e) {
     $("status").innerHTML = `<div class="err">${esc(String(e))}</div>`;
   } finally {

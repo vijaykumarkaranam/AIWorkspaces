@@ -1,0 +1,28 @@
+/* End-to-end services tab (shared by the Nokia and Cisco reports). Uses the reports' theme variables. */
+.e2e .e2e-bar{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:10px 0}
+.e2e .e2e-bar input,.e2e .e2e-bar select{font:inherit;padding:6px 9px;border:1px solid var(--line);border-radius:6px;background:var(--panel);color:var(--ink);min-width:220px}
+.e2e .e2e-kpis{display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:10px;margin:8px 0 14px}
+.e2e .e2e-kpi{cursor:pointer}
+.e2e .e2e-kpi.on{outline:2px solid var(--accent)}
+.e2e table{width:100%;border-collapse:collapse}
+.e2e td,.e2e th{text-align:left;padding:6px 8px;border-bottom:1px solid var(--line);vertical-align:top;font-size:13px}
+.e2e tbody tr{cursor:pointer}
+.e2e tbody tr.sel{background:var(--accent-soft)}
+.e2e .e2e-path{display:flex;align-items:stretch;flex-wrap:wrap;gap:0;margin:6px 0 12px;row-gap:8px}
+.e2e .e2e-box{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:7px 10px;min-width:130px;max-width:250px;font-size:12px}
+.e2e .e2e-box .t{font-size:10.5px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em}
+.e2e .e2e-box .n{font-weight:600;font-size:13px;word-break:break-word}
+.e2e .e2e-box.pe{border-color:var(--accent);border-width:2px}
+.e2e .e2e-box.miss{border-style:dashed;opacity:.85}
+.e2e .e2e-box.bad{border-color:var(--bad)}
+.e2e .e2e-arrow{align-self:center;color:var(--muted);padding:0 6px;font-size:16px}
+.e2e .e2e-pw{align-self:center;display:flex;flex-direction:column;align-items:center;padding:0 6px;font-size:11px;color:var(--muted);min-width:120px;text-align:center}
+.e2e .e2e-pw .ln{width:100%;height:0;border-top:3px solid var(--ok);margin:4px 0}
+.e2e .e2e-pw .ln.down{border-top-color:var(--bad)}
+.e2e .e2e-pw .ln.unknown{border-top:3px dashed var(--muted)}
+.e2e .e2e-stack{display:flex;flex-direction:column;gap:6px}
+.e2e .e2e-issues{margin:6px 0 10px;padding-left:0;list-style:none}
+.e2e .e2e-issues li{margin:3px 0}
+.e2e .e2e-detail{margin-top:14px}
+.e2e code{font-family:var(--mono);font-size:12px;background:var(--bg);border:1px solid var(--line);border-radius:4px;padding:1px 5px}
+@media (max-width:700px){.e2e .e2e-box{max-width:none;min-width:0;flex:1 1 100%}.e2e .e2e-arrow{transform:rotate(90deg);align-self:flex-start}}

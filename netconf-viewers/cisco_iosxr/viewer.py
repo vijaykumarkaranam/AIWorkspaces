@@ -63,6 +63,7 @@ PAGE = r"""<!doctype html>
   <button class="primary" id="runOne">Run all queries</button>
   <button id="runEvery">Run all routers</button>
   <button id="build">Build report</button>
+  <button id="collectFar" title="Fetch the far-end PEs (Cisco or Nokia) of this router's services, then rebuild the report">Collect far ends</button>
   <button id="clear">Clear tabs</button>
 </div>
 <div id="status">Pick a router, then press Run all queries. Each query opens as a tab with its tables when it finishes.</div>
@@ -199,6 +200,16 @@ $("runEvery").onclick = () => guard(async () => {
   say("All routers done. Report is in the Device report tab.");
 });
 $("build").onclick = () => guard(buildReport);
+$("collectFar").onclick = () => guard(async () => {
+  const node = $("dev").value;
+  say(`Fetching the far-end PEs of ${node}'s services through ODL. This can take several minutes...`);
+  const j = await post("/api/e2e-collect", {node});
+  const done = j.results.filter(x => x.action === "fetched"), skipped = j.results.filter(x => x.action === "skip");
+  await buildReport();
+  say(`Fetched ${done.length} far-end PE(s)` + (skipped.length ? `, skipped ${skipped.length} (` +
+      skipped.slice(0, 6).map(x => `${x.ip}: ${x.reason}`).join("; ") + ")" : "") +
+      ". Open the End-to-end services tab in the Device report.");
+});
 $("clear").onclick = () => { reset(); say("Tabs cleared."); };
 
 $("tabs").addEventListener("click", e => {
@@ -295,6 +306,8 @@ class Handler(BaseHTTPRequestHandler):
                 self._run_query(self._body())
             elif path == "/api/build-report":
                 self._build_report()
+            elif path == "/api/e2e-collect":
+                self._e2e_collect(self._body())
             else:
                 self._json(404, {"error": "not found"})
         except Exception as exc:  # return the problem to the page instead of dropping the connection
@@ -320,6 +333,20 @@ class Handler(BaseHTTPRequestHandler):
             self._json(200, {"ok": True, "tables": tables, "data": read_json(entry[1]).get("data")})
         else:
             self._json(200, {"ok": False, "error": sec["error"]})
+
+    def _e2e_collect(self, req):
+        """Fetch the far-end PEs of one router's services and save them for the End-to-end tab."""
+        node = req.get("node", "")
+        if node not in ROUTERS or not IP_RE.match(node):
+            self._json(400, {"error": f"unknown router {node!r}; expected one of {ROUTERS}"})
+            return
+        parent = os.path.dirname(HERE)
+        if parent not in sys.path:
+            sys.path.insert(0, parent)
+        import e2e.collect as collect
+        items = collect.collect_far_ends(node, collect.make_client(CLIENT.base),
+                                         collect.Inventory(cisco_dir=bcr.RESULTS))
+        self._json(200, {"node": node, "results": items})
 
     def _build_report(self):
         bcr.main()  # writes results\cisco_report.html and prints the path

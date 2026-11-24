@@ -1,0 +1,4 @@
+{
+  "_comment": "Copy to loopback_map.json only if ODL mounts a router by an address other than its loopback. Key: loopback (SDP far end / PW neighbour). Value: the node id in ODL.",
+  "192.0.2.21": "198.51.100.21"
+}
