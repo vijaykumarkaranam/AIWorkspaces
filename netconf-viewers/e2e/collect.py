@@ -26,7 +26,6 @@ from . import cisco, nokia
 from .sources import ROOT, Inventory
 from .stitch import build_report_model
 
-EMPTY_ERRORS = ("data-missing", "relevant data model content does not exist")
 _lock = threading.Lock()
 
 
@@ -126,17 +125,16 @@ def fetch_cisco(client, node, results_dir, qids=None, log=print):
     for qid in qids or cisco.FAR_END_QUERIES:
         label = cq.QUERIES.get(qid, {}).get("label", qid)
         try:
-            data = client.data_get(node, cq.DATA_PATHS[qid])
+            # Same reads as the Cisco tool: alternative paths (node locations) tried in order,
+            # and a data-missing answer saved as an empty result (nothing configured there).
+            data, used, note = cq.fetch(client, node, qid)
         except Exception as exc:
             msg = str(exc)
-            if any(x in msg for x in EMPTY_ERRORS):
-                data = {}  # nothing configured under this path on the router: an empty answer, not a failure
-            else:
-                _write(folder, _safe(qid) + "-error", {"node": node, "query": qid, "error": msg})
-                failed.append(f"{qid}: {msg[:200]}")
-                log(f"  {node} {qid}: ERROR {msg[:160]}")
-                continue
-        _write(folder, _safe(qid), {"node": node, "query": qid, "label": label,
+            _write(folder, _safe(qid) + "-error", {"node": node, "query": qid, "error": msg})
+            failed.append(f"{qid}: {msg[:200]}")
+            log(f"  {node} {qid}: ERROR {msg[:160]}")
+            continue
+        _write(folder, _safe(qid), {"node": node, "query": qid, "label": label, "path": used, "note": note,
                                     "fetchedAt": dt.datetime.now().isoformat(timespec="seconds"), "data": data})
         ok.append(qid)
         log(f"  {node} {qid}: ok" + (" (nothing configured)" if data == {} else ""))

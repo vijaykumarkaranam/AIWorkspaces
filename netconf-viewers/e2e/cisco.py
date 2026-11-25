@@ -1,10 +1,14 @@
 """Cisco IOS-XR saved data -> service endpoints, transport paths and detail objects.
 
-Uses these cisco_iosxr queries when they are saved (each one is optional):
-  cisco-l2vpn-config     Cisco-IOS-XR-l2vpn-cfg l2vpn/database: xconnect groups and bridge-domain groups
-  e2e-xconnect-config    the xconnect groups on their own (same model)
+Uses these cisco_iosxr queries when they are saved (each one is optional). The e2e-* reads are the
+same URLs as the Service-LDP-E2E dashboard:
+  e2e-xconnect-config    l2vpn/database/xconnect-groups: point-to-point services (AC + PW neighbour)
+  e2e-bridge-config      l2vpn/database/bridge-domain-groups: bridge domains (ACs, PWs, VFI, VPLS-ID)
+  cisco-l2vpn-config     the whole l2vpn/database (both of the above), used when the two are not saved
+  e2e-xconnect-oper      l2vpnv2/active/xconnects: xconnect state, PW peer, PW id and labels
   e2e-bridge-ports       L2FIB bridge ports: the pseudowires each bridge domain really has, incl. BGP-AD peers
-  cisco-l2vpn            L2FIB node data: cross-connects (pseudowire next hops for P2P services)
+  e2e-l2fibx-cons        L2FIB cross-connects (pseudowire next hops for P2P services)
+  cisco-l2vpn            the whole L2FIB node (cross-connects included), used when e2e-l2fibx-cons is not saved
   e2e-bridge-oper        bridge-domain oper state and PW/AC up counts
   cisco-interfaces-xr    interface state (attachment circuit and core port state, speed)
   e2e-interface-config   interface descriptions (circuit IDs) and Loopback0 address
@@ -12,19 +16,45 @@ Uses these cisco_iosxr queries when they are saved (each one is optional):
   cisco-rib-ipv4         IPv4 RIB: the route to each far-end loopback, primary and backup (TI-LFA) paths, SR labels
   cisco-ethernet-stats   Ethernet error counters and optics per lane
 
-Pseudowire state comes from L2FIB: a PW whose next hop is valid is counted as up. The oper
-xconnect container (l2vpnv2/active/xconnects) is not on every release, so it is not relied on.
+Pseudowire state: the xconnect oper state when it is saved (not on every release), else L2FIB, where
+a PW whose next hop is valid is counted as up.
 """
 import ipaddress
 
 from .transport import cisco_port, key, link, num, obj, port_issue
 from .util import as_list, find_key, get, norm_state, port_of, walk_dicts
 
-QUERIES = ["cisco-l2vpn-config", "e2e-xconnect-config", "e2e-bridge-ports", "cisco-l2vpn", "e2e-bridge-oper",
-           "cisco-interfaces-xr", "e2e-interface-config", "cisco-lldp-native", "cisco-rib-ipv4", "cisco-ethernet-stats"]
-FAR_END_QUERIES = ["cisco-l2vpn-config", "e2e-xconnect-config", "e2e-bridge-ports", "cisco-l2vpn",
-                   "e2e-bridge-oper", "cisco-interfaces-xr", "e2e-interface-config", "cisco-lldp-native",
-                   "cisco-rib-ipv4", "cisco-ethernet-stats"]
+QUERIES = ["e2e-xconnect-config", "e2e-bridge-config", "cisco-l2vpn-config", "e2e-xconnect-oper", "e2e-bridge-ports",
+           "e2e-l2fibx-cons", "cisco-l2vpn", "e2e-bridge-oper", "cisco-interfaces-xr", "e2e-interface-config",
+           "cisco-lldp-native", "cisco-rib-ipv4", "cisco-ethernet-stats"]
+# For a far-end PE: the targeted reads the dashboard uses, not the whole L2VPN database or L2FIB node.
+FAR_END_QUERIES = ["e2e-xconnect-config", "e2e-bridge-config", "e2e-xconnect-oper", "e2e-bridge-ports",
+                   "e2e-l2fibx-cons", "e2e-bridge-oper", "cisco-interfaces-xr", "e2e-interface-config",
+                   "cisco-lldp-native", "cisco-rib-ipv4", "cisco-ethernet-stats"]
+
+
+def xconnect_oper(data):
+    """{(group, name): {state, pws: {(peer, pw id): {...}}, acs: {interface: state}}} from l2vpnv2/active/xconnects."""
+    out = {}
+    for xc in as_list(find_key(data or {}, "xconnect")):
+        if not isinstance(xc, dict) or not xc.get("xconnect-name"):
+            continue
+        rec = {"state": xc.get("state"), "pws": {}, "acs": {}}
+        for seg in ("segment1", "segment2"):
+            s = xc.get(seg) or {}
+            pw = s.get("pseudo-wire")
+            if isinstance(pw, dict):
+                peer = get(pw, "peer-id", "ipv4") or pw.get("peer-address") or get(pw, "neighbor", "ipv4")
+                pid = str(pw.get("pseudo-wire-id") or pw.get("pw-id") or "")
+                rec["pws"][(peer, pid)] = {"state": pw.get("state") or xc.get("state"),
+                                           "localLabel": pw.get("local-label"), "remoteLabel": pw.get("remote-label")}
+            ac = s.get("attachment-circuit")
+            if isinstance(ac, dict):
+                name = get(ac, "interface", "name") or ac.get("interface-name") or ac.get("name")
+                if name:
+                    rec["acs"][name] = ac.get("state")
+        out[(str(xc.get("group-name") or ""), str(xc["xconnect-name"]))] = rec
+    return out
 BACKUP_FLAG = 0x100
 
 
@@ -44,7 +74,9 @@ def vpls_id(v):
 def lldp_neighbours(data):
     """{local interface: neighbour} and this router's LLDP name and advertised addresses."""
     nbrs, addrs = {}, set()
-    for node in as_list(get(data, "Cisco-IOS-XR-ethernet-lldp-oper:lldp", "nodes", "node")):
+    # Whole lldp container, or the lldp/nodes form (root key Cisco-IOS-XR-ethernet-lldp-oper:nodes).
+    nodes = get(data, "Cisco-IOS-XR-ethernet-lldp-oper:lldp", "nodes", "node") or get(data, "Cisco-IOS-XR-ethernet-lldp-oper:nodes", "node")
+    for node in as_list(nodes):
         for itf in as_list(get(node, "interfaces", "interface")):
             for e in as_list(get(itf, "local-network-addresses", "lldp-addr-entry")):
                 ip = get(e, "address", "ipv4-address")
@@ -227,8 +259,10 @@ class _Ctx:
 def pe_from_saved(node, data):
     """Build the PE view for one Cisco router. `data` maps query id -> saved data (may be partial)."""
     ctx = _Ctx(node, data)
-    pw_state, bd_pws = l2fib_pseudowires(data.get("e2e-bridge-ports") or {}, data.get("cisco-l2vpn") or {})
+    pw_state, bd_pws = l2fib_pseudowires(data.get("e2e-bridge-ports") or {}, data.get("e2e-l2fibx-cons") or {},
+                                         data.get("cisco-l2vpn") or {})
     bd_oper = _bridge_oper(data.get("e2e-bridge-oper") or {})
+    xc_oper = xconnect_oper(data.get("e2e-xconnect-oper"))
 
     def ac(name_):
         port = port_of(name_)
@@ -240,35 +274,54 @@ def pe_from_saved(node, data):
                 "portKey": pinfo["key"] if pinfo else None, "portHealth": pinfo["health"] if pinfo else None,
                 "portWhy": pinfo["why"] if pinfo else [], "portIssue": port_issue(pinfo, "Access port") if pinfo else None}
 
-    def pw(peer, pwid, kind):
+    def pw(peer, pwid, kind, oper=None):
         st = pw_state.get((peer, str(pwid)))
         tr = dict(ctx.transport_to(peer))
-        tr["description"] = "PW state from L2FIB next hop" if st else "PW not in saved L2FIB data"
-        return {"id": f"{peer}:{pwid}", "kind": kind, "vcId": str(pwid), "sdpId": None, "peer": peer,
-                "oper": st["oper"] if st else "unknown", "flags": "", "localStatus": "", "peerStatus": "",
-                "transport": tr}
+        if oper:
+            tr["description"] = "PW state from the xconnect oper data"
+        else:
+            tr["description"] = "PW state from L2FIB next hop" if st else "PW not in saved L2FIB or xconnect oper data"
+        p = {"id": f"{peer}:{pwid}", "kind": kind, "vcId": str(pwid), "sdpId": None, "peer": peer,
+             "oper": norm_state(oper["state"]) if oper and oper.get("state") else (st["oper"] if st else "unknown"),
+             "flags": "", "localStatus": "", "peerStatus": "", "transport": tr}
+        if oper and (oper.get("localLabel") or oper.get("remoteLabel")):
+            p["pwLabels"] = {"local": oper.get("localLabel"), "remote": oper.get("remoteLabel")}
+        return p
+
+    def first_of(qids, k):
+        """The first saved query (in order) that has list `k` anywhere in its answer."""
+        for q in qids:
+            found = find_key(data.get(q) or {}, k)
+            if found:
+                return as_list(found)
+        return []
 
     endpoints, raws = [], {}
-    groups = []
-    for src in ("cisco-l2vpn-config", "e2e-xconnect-config"):
-        g = find_key(data.get(src) or {}, "xconnect-group")
-        if g:
-            groups = as_list(g)
-            break
-    for grp in groups:
+    for grp in first_of(("e2e-xconnect-config", "cisco-l2vpn-config"), "xconnect-group"):
         for xc in as_list(get(grp, "p2p-xconnects", "p2p-xconnect")):
             k = f"{grp.get('name')}/{xc.get('name')}"
+            op = xc_oper.get((str(grp.get("name")), str(xc.get("name")))) or {}
             acs = [ac(a.get("name")) for a in as_list(get(xc, "attachment-circuits", "attachment-circuit")) if a.get("name")]
-            pws = [pw(p.get("neighbor"), p.get("pseudowire-id"), "pw")
+            for a in acs:
+                if a["oper"] == "unknown" and op.get("acs", {}).get(a["id"]):
+                    a["oper"] = norm_state(op["acs"][a["id"]])
+            pws = [pw(p.get("neighbor"), p.get("pseudowire-id"), "pw", op.get("pws", {}).get((p.get("neighbor"), str(p.get("pseudowire-id")))))
                    for p in as_list(get(xc, "pseudowire-neighbor-pseudowire-ids", "pseudowire-neighbor-pseudowire-id"))]
             for p in as_list(get(xc, "pseudowires", "pseudowire")):  # older model: pseudowire-id with a neighbor list
                 for nb in as_list(p.get("neighbor")):
-                    pws.append(pw(nb.get("neighbor"), p.get("pseudowire-id"), "pw"))
+                    pws.append(pw(nb.get("neighbor"), p.get("pseudowire-id"), "pw",
+                                  op.get("pws", {}).get((nb.get("neighbor"), str(p.get("pseudowire-id"))))))
             evpn = [f"EVI {e.get('eviid')} AC {e.get('remote-acid')}" for e in as_list(get(xc, "pseudowire-evpns", "pseudowire-evpn"))]
-            endpoints.append(_endpoint("p2p", k, xc.get("name"), acs, pws, None, None, evpn))
-            raws[endpoints[-1]["key"]] = {"config": xc, "group": grp.get("name")}
+            ep = _endpoint("p2p", k, xc.get("name"), acs, pws, None, None, evpn)
+            if op.get("state"):
+                ep["oper"] = norm_state(op["state"])  # the router's own verdict on the xconnect
+            endpoints.append(ep)
+            raws[ep["key"]] = {"config": xc, "group": grp.get("name"),
+                               "oper": {"state": op.get("state"), "attachment-circuits": op.get("acs"),
+                                        "pseudowires": [dict(v, peer=k[0], pwId=k[1]) for k, v in op.get("pws", {}).items()]}
+                               if op else None}
 
-    bd_groups = as_list(find_key(data.get("cisco-l2vpn-config") or {}, "bridge-domain-group"))
+    bd_groups = first_of(("e2e-bridge-config", "cisco-l2vpn-config"), "bridge-domain-group")
     for grp in bd_groups:
         for bd in as_list(get(grp, "bridge-domains", "bridge-domain")):
             gname, bname = str(grp.get("name")), str(bd.get("name"))
@@ -310,8 +363,9 @@ def pe_from_saved(node, data):
             tables=[{"title": "Attachment circuits", "columns": ["AC", "State", "Port", "Description", "CE (LLDP)"],
                      "rows": [[a["id"], a["oper"], link(a["port"], a["portKey"]), a["description"],
                                f"{a['ce']['name']} {a['ce']['port']}" if a["ce"] else ""] for a in ep["acs"]]},
-                    {"title": "Pseudowires", "columns": ["Peer", "PW id", "Kind", "State", "Route to peer"],
+                    {"title": "Pseudowires", "columns": ["Peer", "PW id", "Kind", "State", "VC label local / remote", "Route to peer"],
                      "rows": [[p["peer"], p["vcId"], p["kind"], p["oper"],
+                               f"{p['pwLabels'].get('local')} / {p['pwLabels'].get('remote')}" if p.get("pwLabels") else "",
                                link(p["transport"].get("name"), p["transport"].get("routeKey"))] for p in ep["pws"]]}],
             raw=raws.get(ep["key"]))
 

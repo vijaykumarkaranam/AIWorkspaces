@@ -29,8 +29,9 @@ TABS = [
       "cisco-ospf-config", "cisco-bgp-neighbors", "cisco-ldp", "cisco-bfd", "cisco-rib-ipv4",
       "cisco-sr-config", "cisco-ipv4-static"]),
     ("services", "Services", "L2VPN operational state and configuration.",
-     ["cisco-l2vpn", "cisco-l2vpn-config", "e2e-xconnect-config", "e2e-xconnect-oper", "e2e-bridge-oper",
-      "e2e-bridge-ports", "e2e-ldp-neighbors", "e2e-ldp-bindings", "e2e-mpls-forwarding", "e2e-interface-config"]),
+     ["cisco-l2vpn", "cisco-l2vpn-config", "e2e-xconnect-config", "e2e-bridge-config", "e2e-xconnect-oper",
+      "e2e-bridge-oper", "e2e-bridge-ports", "e2e-l2fibx-cons", "e2e-ldp-neighbors", "e2e-ldp-bindings",
+      "e2e-mpls-forwarding", "e2e-mpls-lsd-labels", "e2e-interface-config"]),
     ("interfaces", "Interfaces and neighbours", "Interface state and counters, Ethernet statistics, LLDP.",
      ["cisco-interfaces", "cisco-interfaces-xr", "cisco-ethernet-stats", "cisco-lldp-native", "cisco-lldp-config"]),
     ("management", "Management", "AAA configuration.", ["cisco-aaa-config"]),
@@ -49,6 +50,8 @@ LABELS = {
     "cisco-ethernet-stats": "Ethernet statistics", "cisco-lldp-native": "LLDP neighbours",
     "cisco-lldp-config": "LLDP configuration", "cisco-aaa-config": "AAA configuration",
     "e2e-xconnect-config": "E2E: xconnect config (AC and pseudowire)", "e2e-xconnect-oper": "E2E: xconnect state",
+    "e2e-bridge-config": "E2E: bridge-domain config (ACs, pseudowires, VFI)", "e2e-l2fibx-cons": "E2E: L2FIB cross-connects",
+    "e2e-mpls-lsd-labels": "E2E: MPLS LSD label summary",
     "e2e-bridge-oper": "E2E: bridge domain state", "e2e-bridge-ports": "E2E: bridge ports (L2FIB)",
     "e2e-ldp-neighbors": "E2E: LDP neighbours", "e2e-ldp-bindings": "E2E: LDP bindings (IPv4)",
     "e2e-mpls-forwarding": "E2E: MPLS forwarding summary", "e2e-interface-config": "E2E: interface config (descriptions)",
@@ -233,7 +236,9 @@ def make_section(qid, entry):
     if status == "error":
         sec["error"] = load(path).get("error", "")
         return sec
-    data = load(path).get("data", {})
+    rec = load(path)
+    data = rec.get("data", {})
+    sec["path"], sec["note"] = rec.get("path") or "", rec.get("note") or ""
     if qid == "cisco-cpu":
         sec["columns"] = ["Node", "1 min %", "5 min %", "15 min %"]
         sec["rows"] = cpu_rows(data)
@@ -423,7 +428,9 @@ function countText(sec, key){
 
 function sectionHTML(sec, key){
   const pill = sec.status === "error" ? '<span class="pill p-bad">error</span>' : '<span class="pill p-ok">data</span>';
-  const head = `<h3>${esc(sec.title)} ${pill} <small>${esc(sec.when)}</small></h3>`;
+  const head = `<h3>${esc(sec.title)} ${pill} <small>${esc(sec.when)}</small></h3>` +
+    (sec.path ? `<div class="small muted mono" style="word-break:break-all">${esc(sec.path)}</div>` : "") +
+    (sec.note ? `<div class="small muted">${esc(sec.note)}</div>` : "");
   if (sec.status === "error") return `<div class="card" style="margin:12px 0">${head}<pre>${esc(sec.error)}</pre></div>`;
   if (!sec.tables || !sec.tables.length) return `<div class="card" style="margin:12px 0">${head}<p class="muted">no rows</p></div>`;
   const parts = sec.tables.map((t, ti) => {

@@ -89,18 +89,21 @@ def run_query(client, node, qid):
     q = queries.QUERIES[qid]
     kind = "config" if q["kind"] == "config" else "state"
     print(f"\n== {qid}: {q['label']}")
+    used, note = None, ""
     try:
         if qid in queries.DATA_PATHS:
-            data = client.data_get(node, queries.DATA_PATHS[qid])
+            data, used, note = queries.fetch(client, node, qid)  # tries each alternative path in order
         else:
             data = client.netconf_get(node, kind, q["filter"])
     except OdlError as exc:
         print(f"    ERROR: {exc}")
         save(node, qid + "-error", {"node": node, "query": qid, "error": str(exc)})
         return False
-    path = save(node, qid, {"node": node, "query": qid, "label": q["label"],
+    path = save(node, qid, {"node": node, "query": qid, "label": q["label"], "path": used, "note": note,
                             "fetchedAt": dt.datetime.now().isoformat(timespec="seconds"), "data": data})
-    print(f"    OK, saved {os.path.relpath(path, HERE)}")
+    print(f"    OK, saved {os.path.relpath(path, HERE)}" + (f"  [{note}]" if note else ""))
+    if used and len(queries.paths_for(qid)) > 1:
+        print(f"    path used: {used}")
     print_summary(data)
     return True
 

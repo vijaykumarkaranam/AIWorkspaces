@@ -1,0 +1,135 @@
+"""Cisco query paths: alternatives by node location, data-missing handling, and the dashboard's reads."""
+import importlib.util
+import os
+import sys
+import unittest
+
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, ROOT)
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+from test_e2e import NOKIA, cisco_data  # noqa: E402
+from e2e import cisco  # noqa: E402
+
+
+def load(rel, name):
+    spec = importlib.util.spec_from_file_location(name, os.path.join(ROOT, rel))
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+Q = load(os.path.join("cisco_iosxr", "queries.py"), "cq_test")
+
+
+class OdlError(Exception):
+    pass
+
+
+MISSING = "Request could not be completed because the relevant data model content does not exist"
+
+
+class FakeClient:
+    """data_get answers from a dict of path -> data or exception text."""
+
+    def __init__(self, answers):
+        self.answers, self.calls = answers, []
+
+    def data_get(self, node, path):
+        self.calls.append(path)
+        a = self.answers.get(path, MISSING)
+        if isinstance(a, str):
+            raise OdlError(a)
+        return a
+
+
+class FetchTest(unittest.TestCase):
+    def test_dashboard_urls_are_in_the_tool(self):
+        """Every URL the working E2E dashboard uses is one of the tool's paths (with the RP0 location)."""
+        working = [
+            "Cisco-IOS-XR-ethernet-lldp-oper:lldp/nodes?content=nonconfig",
+            "Cisco-IOS-XR-ifmgr-cfg:interface-configurations?content=config&depth=5",
+            "Cisco-IOS-XR-mpls-ldp-oper:mpls-ldp/global/active/default-vrf/neighbors",
+            "Cisco-IOS-XR-mpls-ldp-oper:mpls-ldp/global/active/default-vrf/afs/af=ipv4/bindings?content=nonconfig&depth=4",
+            "Cisco-IOS-XR-mpls-lsd-oper:mpls-lsd-nodes/mpls-lsd-node=0%2FRP0%2FCPU0/label-summary?content=nonconfig",
+            "Cisco-IOS-XR-l2vpn-oper:l2vpnv2/active/xconnects?content=nonconfig&depth=4",
+            "Cisco-IOS-XR-l2vpn-oper:l2vpn-forwarding/nodes/node=0%2FRP0%2FCPU0/l2fib-bridge-ports?content=nonconfig&depth=5",
+            "Cisco-IOS-XR-l2vpn-oper:l2vpn-forwarding/nodes/node=0%2FRP0%2FCPU0/l2fibx-cons?content=nonconfig&depth=5",
+            "Cisco-IOS-XR-mpls-ldp-oper:mpls-ldp/global/active/default-vrf/afs/af=ipv4/bindings?content=nonconfig&depth=3",
+            "Cisco-IOS-XR-fib-common-oper:mpls-forwarding/nodes/node=0%2FRP0%2FCPU0/forwarding-summary?content=nonconfig",
+            "Cisco-IOS-XR-l2vpn-cfg:l2vpn/database/xconnect-groups?content=config",
+            "Cisco-IOS-XR-l2vpn-cfg:l2vpn/database/bridge-domain-groups?content=config",
+        ]
+        tool = {p for qid in Q.DATA_PATHS for p in Q.paths_for(qid)}
+        self.assertEqual([w for w in working if w not in tool], [])
+        for qid in ("e2e-bridge-config", "e2e-l2fibx-cons", "e2e-mpls-lsd-labels"):
+            self.assertIn(qid, Q.QUERIES)  # enabled: run by --all and by the viewer
+
+    def test_falls_through_missing_locations(self):
+        rp0, cpu0 = Q.paths_for("e2e-l2fibx-cons")[:2]
+        c = FakeClient({cpu0: {"x": 1}})  # this router has its L2FIB on 0/0/CPU0
+        data, used, note = Q.fetch(c, "n", "e2e-l2fibx-cons")
+        self.assertEqual((data, used, note), ({"x": 1}, cpu0, ""))
+        self.assertEqual(c.calls[:2], [rp0, cpu0])
+
+    def test_first_location_wins_when_it_answers(self):
+        rp0 = Q.paths_for("e2e-bridge-ports")[0]
+        c = FakeClient({rp0: {"ok": 1}})
+        self.assertEqual(Q.fetch(c, "n", "e2e-bridge-ports")[1], rp0)
+        self.assertEqual(len(c.calls), 1)
+
+    def test_all_missing_is_empty_not_error(self):
+        data, used, note = Q.fetch(FakeClient({}), "n", "e2e-xconnect-config")
+        self.assertEqual(data, {})
+        self.assertIn("nothing configured", note)
+
+    def test_real_error_on_every_path_raises_with_paths(self):
+        paths = Q.paths_for("cisco-l2vpn")
+        c = FakeClient({p: "HTTP 500: timeout" for p in paths})
+        with self.assertRaises(OdlError) as ctx:
+            Q.fetch(c, "n", "cisco-l2vpn")
+        self.assertIn("paths tried", str(ctx.exception))
+        self.assertEqual(len(c.calls), len(paths))
+
+    def test_error_then_success_uses_the_working_path(self):
+        whole, nodes = Q.paths_for("cisco-lldp-native")
+        c = FakeClient({whole: "HTTP 500: too big", nodes: {"Cisco-IOS-XR-ethernet-lldp-oper:nodes": {"node": []}}})
+        self.assertEqual(Q.fetch(c, "n", "cisco-lldp-native")[1], nodes)
+
+
+class AdapterTest(unittest.TestCase):
+    def test_bridge_domains_from_bridge_domain_groups_query(self):
+        d = cisco_data(ac_state="im-state-up")
+        db = d.pop("cisco-l2vpn-config")["Cisco-IOS-XR-l2vpn-cfg:database"]
+        d["e2e-bridge-config"] = {"Cisco-IOS-XR-l2vpn-cfg:bridge-domain-groups": db["bridge-domain-groups"]}
+        d["e2e-xconnect-config"] = {"Cisco-IOS-XR-l2vpn-cfg:xconnect-groups": db["xconnect-groups"]}
+        pe = cisco.pe_from_saved("10.0.0.2", d)
+        self.assertEqual(sorted(e["key"] for e in pe["endpoints"]), ["bridge-domain:BG/BD200", "p2p:G/X100"])
+
+    def test_xconnect_oper_state_and_vc_labels(self):
+        d = cisco_data(ac_state="im-state-up")
+        d.pop("cisco-l2vpn")  # no L2FIB: the PW state must come from the xconnect oper data
+        d["e2e-xconnect-oper"] = {"Cisco-IOS-XR-l2vpn-oper:xconnects": {"xconnect": [{
+            "group-name": "G", "xconnect-name": "X100", "state": "l2vpn-xc-state-down",
+            "segment1": {"attachment-circuit": {"interface": {"name": "GigabitEthernet0/0/0/1.10"}, "state": "l2vpn-segment-state-up"}},
+            "segment2": {"pseudo-wire": {"peer-id": {"ipv4": NOKIA}, "pseudo-wire-id": 100, "state": "l2vpn-pw-state-down",
+                                         "local-label": 24001, "remote-label": 524000}}}]}}
+        pe = cisco.pe_from_saved("10.0.0.2", d)
+        x = next(e for e in pe["endpoints"] if e["key"] == "p2p:G/X100")
+        self.assertEqual(x["oper"], "down")
+        self.assertEqual(x["pws"][0]["oper"], "down")
+        self.assertEqual(x["pws"][0]["pwLabels"], {"local": 24001, "remote": 524000})
+        import json
+        json.dumps(pe["objects"])  # the raw oper record must be JSON for the page
+
+    def test_lldp_nodes_form(self):
+        d = cisco_data(ac_state="im-state-up")
+        whole = d["cisco-lldp-native"]["Cisco-IOS-XR-ethernet-lldp-oper:lldp"]
+        d["cisco-lldp-native"] = {"Cisco-IOS-XR-ethernet-lldp-oper:nodes": whole["nodes"]}
+        pe = cisco.pe_from_saved("10.0.0.2", d)
+        x = next(e for e in pe["endpoints"] if e["key"] == "p2p:G/X100")
+        self.assertEqual(x["acs"][0]["ce"]["name"], "CE-B")
+
+
+if __name__ == "__main__":
+    unittest.main()

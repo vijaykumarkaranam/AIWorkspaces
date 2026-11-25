@@ -6,7 +6,7 @@ Then open http://127.0.0.1:8766/
 
 Endpoints:
   GET  /                  the control page
-  GET  /api/devices       routers from the ROUTERS list
+  GET  /api/devices       routers from the ROUTERS list plus every Cisco node mounted in ODL
   GET  /api/queries       query ids and labels, in run order
   POST /api/run-query     {"node": "10.54.174.13", "query": "cisco-cpu"}  runs one query, saves it, returns its tables
   POST /api/build-report  builds results\\cisco_report.html from the newest saved results
@@ -32,6 +32,29 @@ import build_cisco_report as bcr  # noqa: E402
 
 STYLE_FILE = os.path.join(HERE, "report_style.css")  # copy of the Nokia report style, kept beside this script
 ROUTERS = os.environ.get("ROUTERS", "10.54.174.13 10.54.172.1").split()
+ODL_NODES = {}  # Cisco nodes mounted in ODL: {node id: connection status}, filled by /api/devices
+
+
+def _e2e_collect_module():
+    parent = os.path.dirname(HERE)
+    if parent not in sys.path:
+        sys.path.insert(0, parent)
+    import e2e.collect
+    return e2e.collect
+
+
+def odl_cisco_nodes():
+    """Cisco IOS-XR nodes mounted in ODL (vendor from their NETCONF capabilities), or {} if ODL cannot be read."""
+    try:
+        topo = _e2e_collect_module().topology(CLIENT)
+    except Exception as exc:  # the page still works with the ROUTERS list
+        sys.stderr.write(f"ODL topology not read: {exc}\n")
+        return {}
+    return {n: t["status"] for n, t in topo.items() if t["vendor"] == "cisco"}
+
+
+def known_router(node):
+    return bool(IP_RE.match(node or "")) and (node in ROUTERS or node in ODL_NODES)
 IP_RE = re.compile(r"^[0-9A-Za-z.\-:_]{1,64}$")
 CLIENT = None  # set in main()
 
@@ -75,7 +98,7 @@ const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;
 const OK = /^(up|active|act|ok|connected|true|enabled|running|full|established|alive)$/i;
 const BAD = /^(down|inactive|false|disabled|error|idle|not-active|unreachable|critical)$/i;
 const MAX_ROWS = 1000;
-let devices = [], queries = [];
+let devices = [], routers = [], queries = [];
 let tabs = [];          // {node, id, label, ok, tables:[{title,kind,columns,rows,raw,count}], ti, error, mode, q}
 let active = -1;        // index into tabs
 let reportReady = false, showReport = false;
@@ -195,7 +218,7 @@ $("runOne").onclick = () => guard(async () => {
 });
 $("runEvery").onclick = () => guard(async () => {
   reset();
-  for (const n of devices) await runRouter(n);
+  for (const n of routers) await runRouter(n);  // the ROUTERS list only, not every node in ODL
   await buildReport();
   say("All routers done. Report is in the Device report tab.");
 });
@@ -251,8 +274,10 @@ document.addEventListener("input", e => {
 
 Promise.all([fetch("/api/devices").then(r => r.json()), fetch("/api/queries").then(r => r.json())]).then(([d, q]) => {
   devices = d.devices;
+  routers = d.routers || d.devices;
   queries = q.queries;
-  $("dev").innerHTML = devices.map(x => `<option value="${esc(x)}">${esc(x)}</option>`).join("");
+  const st = d.status || {};
+  $("dev").innerHTML = devices.map(x => `<option value="${esc(x)}">${esc(x)}${st[x] && st[x] !== "connected" ? " (" + esc(st[x]) + ")" : ""}</option>`).join("");
   $("meta").textContent = "ODL: " + d.odl + " · " + queries.length + " queries";
 });
 </script>
@@ -287,7 +312,11 @@ class Handler(BaseHTTPRequestHandler):
         if path in ("/", "/index.html"):
             self._send(200, PAGE_HTML, "text/html; charset=utf-8")
         elif path == "/api/devices":
-            self._json(200, {"devices": ROUTERS, "odl": CLIENT.base})
+            ODL_NODES.clear()
+            ODL_NODES.update(odl_cisco_nodes())
+            extra = sorted(n for n in ODL_NODES if n not in ROUTERS)
+            self._json(200, {"devices": ROUTERS + extra, "routers": ROUTERS, "odl": CLIENT.base,
+                             "status": {n: ODL_NODES.get(n, "") for n in ROUTERS + extra}})
         elif path == "/api/queries":
             self._json(200, {"queries": [{"id": q, "label": m["label"]} for q, m in queries.QUERIES.items()]})
         elif path == "/report":
@@ -315,8 +344,8 @@ class Handler(BaseHTTPRequestHandler):
 
     def _run_query(self, req):
         node, qid = req.get("node", ""), req.get("query", "")
-        if node not in ROUTERS or not IP_RE.match(node):
-            self._json(400, {"error": f"unknown router {node!r}; expected one of {ROUTERS}"})
+        if not known_router(node):
+            self._json(400, {"error": f"unknown router {node!r}: not in ROUTERS and not a Cisco node mounted in ODL"})
             return
         if qid not in queries.QUERIES:
             self._json(400, {"error": f"unknown query {qid!r}"})
@@ -337,8 +366,8 @@ class Handler(BaseHTTPRequestHandler):
     def _e2e_collect(self, req):
         """Fetch the far-end PEs of one router's services and save them for the End-to-end tab."""
         node = req.get("node", "")
-        if node not in ROUTERS or not IP_RE.match(node):
-            self._json(400, {"error": f"unknown router {node!r}; expected one of {ROUTERS}"})
+        if not known_router(node):
+            self._json(400, {"error": f"unknown router {node!r}: not in ROUTERS and not a Cisco node mounted in ODL"})
             return
         parent = os.path.dirname(HERE)
         if parent not in sys.path:

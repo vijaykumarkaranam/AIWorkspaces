@@ -99,14 +99,27 @@ QUERIES = {
                           "filter": f'<lldp xmlns="{CISCO["lldpnative"]}"/>'},
 }
 
+# Node location keys differ by platform: NCS-540/5500 use 0/RP0/CPU0 (and some containers 0/0/CPU0),
+# ASR 9000 uses 0/RSP0/CPU0. Paths that need one are tried with each location in this order.
+LOCATIONS = ["0%2FRP0%2FCPU0", "0%2F0%2FCPU0", "0%2FRSP0%2FCPU0"]
+
+
+def at_locations(template):
+    """The same path for every node location: template contains {loc}."""
+    return [template.format(loc=loc) for loc in LOCATIONS]
+
+
 # Queries verified by hand as RESTCONF GETs on the mount path (module:container).
 # run_queries.py uses these instead of the RPC filter when a query id is listed here.
+# A value may be a list of alternative paths: they are tried in order (see fetch below).
 DATA_PATHS = {
     "cisco-interfaces-xr": "Cisco-IOS-XR-pfi-im-cmd-oper:interfaces/interface-xr",
     "cisco-platform-inventory": "Cisco-IOS-XR-platform-inventory-oper:platform-inventory/racks",
     "cisco-system-time": "Cisco-IOS-XR-shellutil-oper:system-time",
     "cisco-ntp": "Cisco-IOS-XR-ip-ntp-oper:ntp",
-    "cisco-lldp-native": "Cisco-IOS-XR-ethernet-lldp-oper:lldp",
+    # The whole LLDP container (has this router's name); the nodes list alone is the form the E2E dashboard uses.
+    "cisco-lldp-native": ["Cisco-IOS-XR-ethernet-lldp-oper:lldp",
+                          "Cisco-IOS-XR-ethernet-lldp-oper:lldp/nodes?content=nonconfig"],
 
     # ---- Working paths from manual tests (GET on the mount path)
     "cisco-ospf-summary": "Cisco-IOS-XR-ipv4-ospf-oper:ospf/processes/process=BSPD/default-vrf/ospf-summary",
@@ -117,7 +130,7 @@ DATA_PATHS = {
     "cisco-bgp-neighbors": "Cisco-IOS-XR-ipv4-bgp-oper:bgp/instances/instance=default/instance-active/default-vrf/neighbors?content=nonconfig",
     "cisco-ldp": "Cisco-IOS-XR-mpls-ldp-oper:mpls-ldp",
     "cisco-bfd": "Cisco-IOS-XR-ip-bfd-oper:bfd",
-    "cisco-l2vpn": "Cisco-IOS-XR-l2vpn-oper:l2vpn-forwarding/nodes/node=0%2F0%2FCPU0?content=nonconfig",
+    "cisco-l2vpn": at_locations("Cisco-IOS-XR-l2vpn-oper:l2vpn-forwarding/nodes/node={loc}?content=nonconfig"),
     "cisco-sr-config": "Cisco-IOS-XR-um-segment-routing-cfg:segment-routing",
 
     # ---- Batch 2: device health, control plane, services (candidates, verified by the run)
@@ -139,14 +152,23 @@ DATA_PATHS = {
     "cisco-l2vpn-xconnect-config": "Cisco-IOS-XR-l2vpn-cfg:l2vpn/xconnect?content=config",
     "cisco-l2vpn-bridge-config": "Cisco-IOS-XR-l2vpn-cfg:l2vpn/bridge?content=config",
 
-    # ---- End-to-end service paths: the same reads the Service-LDP-E2E dashboard uses (verify on the device)
+    # ---- End-to-end service paths: the same reads the Service-LDP-E2E dashboard uses (checked on 10.137.76.18)
     "e2e-xconnect-config": "Cisco-IOS-XR-l2vpn-cfg:l2vpn/database/xconnect-groups?content=config",
+    "e2e-bridge-config": "Cisco-IOS-XR-l2vpn-cfg:l2vpn/database/bridge-domain-groups?content=config",
     "e2e-xconnect-oper": "Cisco-IOS-XR-l2vpn-oper:l2vpnv2/active/xconnects?content=nonconfig&depth=4",
     "e2e-bridge-oper": "Cisco-IOS-XR-l2vpn-oper:l2vpnv2/active/bridge-domains?content=nonconfig&depth=4",
-    "e2e-bridge-ports": "Cisco-IOS-XR-l2vpn-oper:l2vpn-forwarding/nodes/node=0%2FRP0%2FCPU0/l2fib-bridge-ports?content=nonconfig&depth=5",
-    "e2e-ldp-neighbors": "Cisco-IOS-XR-mpls-ldp-oper:mpls-ldp/global/active/default-vrf/neighbors?content=nonconfig",
-    "e2e-ldp-bindings": "Cisco-IOS-XR-mpls-ldp-oper:mpls-ldp/global/active/default-vrf/afs/af=ipv4/bindings?content=nonconfig&depth=4",
-    "e2e-mpls-forwarding": "Cisco-IOS-XR-fib-common-oper:mpls-forwarding/nodes/node=0%2FRP0%2FCPU0/forwarding-summary?content=nonconfig",
+    "e2e-bridge-ports": at_locations(
+        "Cisco-IOS-XR-l2vpn-oper:l2vpn-forwarding/nodes/node={loc}/l2fib-bridge-ports?content=nonconfig&depth=5"),
+    "e2e-l2fibx-cons": at_locations(
+        "Cisco-IOS-XR-l2vpn-oper:l2vpn-forwarding/nodes/node={loc}/l2fibx-cons?content=nonconfig&depth=5"),
+    "e2e-ldp-neighbors": ["Cisco-IOS-XR-mpls-ldp-oper:mpls-ldp/global/active/default-vrf/neighbors?content=nonconfig",
+                          "Cisco-IOS-XR-mpls-ldp-oper:mpls-ldp/global/active/default-vrf/neighbors"],
+    "e2e-ldp-bindings": ["Cisco-IOS-XR-mpls-ldp-oper:mpls-ldp/global/active/default-vrf/afs/af=ipv4/bindings?content=nonconfig&depth=4",
+                         "Cisco-IOS-XR-mpls-ldp-oper:mpls-ldp/global/active/default-vrf/afs/af=ipv4/bindings?content=nonconfig&depth=3"],
+    "e2e-mpls-forwarding": at_locations(
+        "Cisco-IOS-XR-fib-common-oper:mpls-forwarding/nodes/node={loc}/forwarding-summary?content=nonconfig"),
+    "e2e-mpls-lsd-labels": at_locations(
+        "Cisco-IOS-XR-mpls-lsd-oper:mpls-lsd-nodes/mpls-lsd-node={loc}/label-summary?content=nonconfig"),
     "e2e-interface-config": "Cisco-IOS-XR-ifmgr-cfg:interface-configurations?content=config&depth=5",
     "cisco-ipv4-static": "Cisco-IOS-XR-ip-static-cfg:router-static?content=config",
 }
@@ -178,3 +200,41 @@ DISABLED = [
 ]
 for _qid in DISABLED:
     QUERIES.pop(_qid, None)
+
+# A RESTCONF answer that the path exists in the model but holds nothing on this router
+# (for example no xconnects on a VPLS-only router, or a node location the router does not have).
+EMPTY_ERRORS = ("data-missing", "relevant data model content does not exist")
+
+
+def paths_for(qid):
+    p = DATA_PATHS[qid]
+    return list(p) if isinstance(p, (list, tuple)) else [p]
+
+
+def fetch(client, node, qid):
+    """Read one DATA_PATHS query, trying its alternative paths in order.
+
+    Returns (data, path used, note). The first path that answers with data wins. A "data missing"
+    answer moves on to the next path; if every path is missing, the result is empty (nothing is
+    configured there), not an error. Any other failure on every path raises the first error, with
+    the paths tried. Works with both copies of odl_client (they raise their own OdlError)."""
+    tried, first_err, empty_path = [], None, None
+    for path in paths_for(qid):
+        try:
+            data = client.data_get(node, path)
+        except Exception as exc:  # OdlError: keep trying the other paths
+            msg = str(exc)
+            tried.append(f"{path}: {msg[:160]}")
+            if any(x in msg for x in EMPTY_ERRORS):
+                empty_path = empty_path or path
+            elif first_err is None:
+                first_err = exc
+            continue
+        if data:
+            return data, path, ""
+        empty_path = empty_path or path
+    if empty_path is not None:
+        return {}, empty_path, "nothing configured under this path on the router (data-missing)"
+    if first_err is not None and len(tried) > 1:
+        raise type(first_err)(f"{first_err} | paths tried: " + " || ".join(tried))
+    raise first_err

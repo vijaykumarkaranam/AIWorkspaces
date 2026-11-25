@@ -51,6 +51,7 @@ const E2E = (() => {
     const lsp = tr.lsp;
     return `<div class="e2e-pw"><div><b>${esc(pw.kind)}</b> <span class="mono">${esc(pw.id)}</span></div><div class="ln ${st}"></div>
       <div>${pill(pw.oper)} ${esc(tr.type || "")}${tr.label ? ` · label <span class="mono">${esc(tr.label)}</span>` : ""}</div>
+      ${pw.pwLabels ? `<div class="small">VC label <span class="mono">${esc(pw.pwLabels.local)} / ${esc(pw.pwLabels.remote)}</span> <span class="muted">local / remote</span></div>` : ""}
       ${tr.sdpKey ? `<div>${ol(tr.sdpKey, "SDP " + esc(pw.sdpId))} ${pill(tr.sdpOper)}</div>` : ""}
       ${lsp ? `<div>${ol(lsp.key, "LSP " + esc(lsp.name))} ${pill(lsp.oper)}</div>` : ""}
       ${tr.routeKey ? `<div>${ol(tr.routeKey, esc(tr.name))}</div>` : (!tr.sdpKey && !lsp && tr.name ? `<div class="mono">${esc(tr.name)}</div>` : "")}

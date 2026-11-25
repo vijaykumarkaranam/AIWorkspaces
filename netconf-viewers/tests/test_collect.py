@@ -42,8 +42,18 @@ class FakeOdl(BaseHTTPRequestHandler):
                      {"node-id": "9.9.9.9", "netconf-node-topology:connection-status": "connecting"}]
             return self._send(200, {"network-topology:topology": [{"node": nodes}]})
         data = cisco_data(ac_state="im-state-up")
-        if "xconnect-groups" in self.path:
+        db = data["cisco-l2vpn-config"]["Cisco-IOS-XR-l2vpn-cfg:database"]
+        if "l2vpnv2/active/xconnects" in self.path:  # not on this release
             return self._send(409, DATA_MISSING)
+        if "xconnect-groups" in self.path:
+            return self._send(200, {"Cisco-IOS-XR-l2vpn-cfg:xconnect-groups": db["xconnect-groups"]})
+        if "bridge-domain-groups" in self.path:
+            return self._send(200, {"Cisco-IOS-XR-l2vpn-cfg:bridge-domain-groups": db["bridge-domain-groups"]})
+        if "l2fibx-cons" in self.path:  # this router keeps its L2FIB on 0/0/CPU0 only
+            if "node=0%2F0%2FCPU0" not in self.path:
+                return self._send(409, DATA_MISSING)
+            return self._send(200, {"Cisco-IOS-XR-l2vpn-oper:l2fibx-cons":
+                                    data["cisco-l2vpn"]["Cisco-IOS-XR-l2vpn-oper:node"][0]["l2fibx-cons"]})
         for qid, key in (("cisco-l2vpn-config", "l2vpn-cfg:l2vpn/database"), ("e2e-bridge-ports", "l2fib-bridge-ports"),
                          ("cisco-l2vpn", "l2vpn-forwarding/nodes"), ("cisco-rib-ipv4", "ip-rib-ipv4-oper"),
                          ("cisco-ethernet-stats", "drivers-media-eth-oper"),
@@ -113,9 +123,14 @@ class CollectTest(unittest.TestCase):
         fetched = [r for r in res if r["action"] == "fetched"]
         self.assertEqual([r["ip"] for r in fetched], ["2.2.2.2"])
         self.assertEqual(fetched[0]["failed"], [])
-        saved = os.listdir(os.path.join(self.cisco_dir, CISCO))
-        self.assertTrue(any(f.endswith("_e2e-xconnect-config.json") for f in saved))  # data-missing saved as empty
+        folder = os.path.join(self.cisco_dir, CISCO)
+        saved = os.listdir(folder)
+        self.assertTrue(any(f.endswith("_e2e-xconnect-oper.json") for f in saved))  # data-missing saved as empty
         self.assertFalse(any(f.endswith("-error.json") for f in saved))
+        rec = json.load(open(os.path.join(folder, next(f for f in saved if f.endswith("_e2e-l2fibx-cons.json")))))
+        self.assertIn("node=0%2F0%2FCPU0", rec["path"])  # fell through 0/RP0/CPU0 to the location that answers
+        hits = [p for m, p in FakeOdl.calls if "l2fibx-cons" in p and CISCO in p]
+        self.assertTrue(any("0%2FRP0%2FCPU0" in p for p in hits) and any("0%2F0%2FCPU0" in p for p in hits))
 
         after = build_report_model(NOKIA, self.inv())
         s = next(x for x in after["services"] if x["key"] == "epipe:100")
