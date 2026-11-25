@@ -97,6 +97,73 @@ class FetchTest(unittest.TestCase):
         self.assertEqual(Q.fetch(c, "n", "cisco-lldp-native")[1], nodes)
 
 
+MOUNT_ERROR = {"errors": {"error": [{"error-tag": "resource-denied-transport", "error-message": "Mount point does not exist",
+                                     "error-path": "/network-topology:network-topology/topology[topology-id='topology-netconf']"
+                                                   "/node[node-id='10.137.76.18']", "error-type": "protocol"}]}}
+
+
+class NotMountedTest(unittest.TestCase):
+    """The error seen when the tool talks to a controller that does not have the router (dev vs prod)."""
+
+    @classmethod
+    def setUpClass(cls):
+        import json
+        import threading
+        from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+        class Odl(BaseHTTPRequestHandler):
+            def do_GET(self):
+                if "yang-ext:mount" in self.path or "node=10.137.76.18" in self.path:
+                    code, body = (409, MOUNT_ERROR) if "yang-ext:mount" in self.path else (409, {"errors": {"error": [
+                        {"error-tag": "data-missing", "error-message": "Request could not be completed because the relevant data model content does not exist"}]}})
+                else:  # node 10.0.0.2 is mounted here
+                    code, body = 200, {"network-topology:node": [{"node-id": "10.0.0.2",
+                                                                  "netconf-node-topology:connection-status": "connected"}]}
+                data = json.dumps(body).encode()
+                self.send_response(code)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(data)))
+                self.end_headers()
+                self.wfile.write(data)
+
+            def log_message(self, *a):
+                pass
+
+        cls.srv = ThreadingHTTPServer(("127.0.0.1", 0), Odl)
+        threading.Thread(target=cls.srv.serve_forever, daemon=True).start()
+        cls.base = f"http://127.0.0.1:{cls.srv.server_address[1]}"
+        cls.mod = load(os.path.join("cisco_iosxr", "odl_client.py"), "odl_client_nm")
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.srv.shutdown()
+        cls.srv.server_close()
+
+    def client(self):
+        return self.mod.OdlClient(base=self.base, user="", password="")
+
+    def test_error_names_node_and_controller(self):
+        with self.assertRaises(self.mod.NotMountedError) as ctx:
+            self.client().data_get("10.137.76.18", "Cisco-IOS-XR-l2vpn-cfg:l2vpn/database/xconnect-groups?content=config")
+        msg = str(ctx.exception)
+        self.assertIn("node 10.137.76.18 is not mounted on ODL " + self.base, msg)
+        self.assertIn("dev and prod", msg)
+        self.assertIsInstance(ctx.exception, self.mod.OdlError)  # existing handlers still catch it
+
+    def test_fetch_stops_at_the_first_not_mounted_answer(self):
+        c = self.client()
+        calls = []
+        orig = c.data_get
+        c.data_get = lambda n, p: (calls.append(p), orig(n, p))[1]
+        with self.assertRaises(self.mod.NotMountedError):
+            Q.fetch(c, "10.137.76.18", "e2e-l2fibx-cons")  # three location alternatives, but one call is enough
+        self.assertEqual(len(calls), 1)
+
+    def test_is_mounted(self):
+        self.assertEqual(self.client().is_mounted("10.0.0.2"), (True, "connected"))
+        self.assertEqual(self.client().is_mounted("10.137.76.18"), (False, ""))
+
+
 class AdapterTest(unittest.TestCase):
     def test_bridge_domains_from_bridge_domain_groups_query(self):
         d = cisco_data(ac_state="im-state-up")

@@ -18,7 +18,7 @@ import sys
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 
-from odl_client import OdlClient, OdlError, TOPOLOGY  # noqa: E402
+from odl_client import NotMountedError, OdlClient, OdlError, TOPOLOGY  # noqa: E402
 import queries  # noqa: E402
 
 RESULTS = os.path.join(HERE, "results")
@@ -95,6 +95,8 @@ def run_query(client, node, qid):
             data, used, note = queries.fetch(client, node, qid)  # tries each alternative path in order
         else:
             data = client.netconf_get(node, kind, q["filter"])
+    except NotMountedError:
+        raise  # nothing to save: the router is not on this controller, so every query would fail
     except OdlError as exc:
         print(f"    ERROR: {exc}")
         save(node, qid + "-error", {"node": node, "query": qid, "error": str(exc)})
@@ -159,6 +161,19 @@ def main():
         except OdlError as exc:
             print(f"ERROR: {exc}")
     ids = list(queries.QUERIES) if a.all else a.query
+    if ids:
+        try:
+            mounted, status = client.is_mounted(a.node)
+        except OdlError as exc:
+            print(f"ERROR: {exc}")
+            sys.exit(2)
+        if not mounted:
+            print(f"ERROR: node {a.node} is not mounted on ODL {client.base}.\n"
+                  f"  Check ODL_BASE: dev and prod controllers mount different routers. Use the controller whose\n"
+                  f"  RESTCONF URLs work for this router (the same base URL as in Postman or the E2E dashboard).")
+            sys.exit(2)
+        if status and status != "connected":
+            print(f"WARNING: node {a.node} is mounted on {client.base} but its NETCONF session is '{status}'.")
     ok = 0
     failed = []
     for qid in ids:
@@ -167,7 +182,12 @@ def main():
             continue
         if a.pause:
             input(f"\nPress Enter to run {qid} (Ctrl+C to stop)...")
-        if run_query(client, a.node, qid):
+        try:
+            done = run_query(client, a.node, qid)
+        except NotMountedError as exc:
+            print(f"    ERROR: {exc}\nStopped: the remaining queries would fail the same way.")
+            sys.exit(2)
+        if done:
             ok += 1
         else:
             failed.append(qid)

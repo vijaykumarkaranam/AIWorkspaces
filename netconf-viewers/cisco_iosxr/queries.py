@@ -224,6 +224,8 @@ def fetch(client, node, qid):
             data = client.data_get(node, path)
         except Exception as exc:  # OdlError: keep trying the other paths
             msg = str(exc)
+            if "Mount point does not exist" in msg or "is not mounted on ODL" in msg:
+                raise  # the router is not on this controller: every other path fails the same way
             tried.append(f"{path}: {msg[:160]}")
             if any(x in msg for x in EMPTY_ERRORS):
                 empty_path = empty_path or path

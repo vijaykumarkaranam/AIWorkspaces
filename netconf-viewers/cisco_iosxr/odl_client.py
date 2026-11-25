@@ -22,6 +22,13 @@ class OdlError(Exception):
     """ODL is unreachable, rejected the request, or returned NETCONF errors."""
 
 
+class NotMountedError(OdlError):
+    """The router is not mounted on this ODL controller (wrong controller, or the mount was removed)."""
+
+
+NOT_MOUNTED = "Mount point does not exist"
+
+
 class OdlClient:
     def __init__(self, base=None, user=None, password=None, cookie=None, timeout=180):
         self.base = (base or os.environ.get("ODL_BASE") or "http://10.137.202.20:8181").rstrip("/")
@@ -85,7 +92,33 @@ class OdlClient:
             status, text = self._request("POST", path, xml_input, "application/xml")
         else:
             status, text = self._request("POST", path, json.dumps(json_input), "application/json")
-        return self._parse(status, text)
+        return self._parse_mounted(node, status, text)
+
+    def _parse_mounted(self, node, status, text):
+        """_parse, but a missing mount point becomes a NotMountedError that names the node and controller."""
+        try:
+            return self._parse(status, text)
+        except OdlError as exc:
+            if NOT_MOUNTED in str(exc):
+                raise NotMountedError(
+                    f"node {node} is not mounted on ODL {self.base} ({NOT_MOUNTED}). Check that ODL_BASE is the "
+                    f"controller that has this router (dev and prod mount different routers), and that the node id "
+                    f"is exactly as ODL lists it.") from exc
+            raise
+
+    def is_mounted(self, node):
+        """(True, status) when ODL lists the node, else (False, '') - one topology read, no device access."""
+        status, text = self._request("GET", f"{TOPOLOGY}/node={node}?content=nonconfig&depth=2")
+        try:
+            data = self._parse(status, text)
+        except OdlError:
+            return False, ""
+        nodes = (data.get("network-topology:topology") or [{}])[0].get("node") or data.get("network-topology:node") or []
+        if not nodes:
+            return False, ""
+        n = nodes[0]
+        nn = n.get("netconf-node-topology:netconf-node") or n
+        return True, nn.get("connection-status") or n.get("netconf-node-topology:connection-status") or ""
 
     def netconf_get(self, node, kind, inner_xml):
         """kind 'state' uses ietf-netconf:get; kind 'config' uses get-config on the running datastore."""
@@ -110,4 +143,4 @@ class OdlClient:
         if "?" not in path and "-cfg:" not in path:
             path += "?content=nonconfig"
         status, text = self._request("GET", path)
-        return self._parse(status, text)
+        return self._parse_mounted(node, status, text)

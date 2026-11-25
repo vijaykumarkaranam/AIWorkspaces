@@ -41,8 +41,20 @@ A "data-missing" answer means nothing is configured under that path, for example
 VPLS-only router. It is saved as an empty result, not as an error.
 
 The viewer's router list is `ROUTERS` (in `run_viewer.bat`) plus every Cisco node mounted in ODL, so you
-can pick any of them. **Run all routers** still runs only the `ROUTERS` list. Set `ODL_BASE` in
-`run_viewer.bat` to the controller you use, for example your dev ODL.
+can pick any of them. **Run all routers** still runs only the `ROUTERS` list.
+
+## Choosing the ODL controller (dev or prod)
+Dev and prod controllers mount different routers. Asking a controller about a router it does not
+mount fails with **"Mount point does not exist"**: use the controller whose URLs work for that router in
+Postman or the E2E dashboard.
+- **Batch files:** `run_viewer.bat` and `run_queries.bat` ask for it at start (`..\choose_odl.bat`):
+  1 = prod, 2 = dev, or a full URL. A preset `ODL_BASE` environment variable is used without asking.
+- **Viewer:** type the controller URL in the **ODL** box (optionally another user and password) and
+  press **Use ODL**. The router list reloads from that controller, and routers that are not mounted
+  there are marked "not on this ODL".
+- **Errors:** `run_queries.py` checks the mount before running and stops with a clear message.
+  Queries also stop at the first "not mounted" answer, so no error files are written for the other
+  queries.
 
 ## Reading the results
 - An error like `unknown-element` or `unknown-namespace` means the model or path is not on the device.

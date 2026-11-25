@@ -47,10 +47,27 @@ def odl_cisco_nodes():
     """Cisco IOS-XR nodes mounted in ODL (vendor from their NETCONF capabilities), or {} if ODL cannot be read."""
     try:
         topo = _e2e_collect_module().topology(CLIENT)
+        TOPOLOGY_ERROR["text"] = ""
     except Exception as exc:  # the page still works with the ROUTERS list
+        TOPOLOGY_ERROR["text"] = str(exc)[:300]
         sys.stderr.write(f"ODL topology not read: {exc}\n")
         return {}
     return {n: t["status"] for n, t in topo.items() if t["vendor"] == "cisco"}
+
+
+ODL_RE = re.compile(r"^https?://[A-Za-z0-9.\-]+(:\d{1,5})?$")
+TOPOLOGY_ERROR = {"text": ""}
+
+
+def devices_payload():
+    """Router list for the page: ROUTERS plus the Cisco nodes mounted on the current controller."""
+    ODL_NODES.clear()
+    ODL_NODES.update(odl_cisco_nodes())
+    extra = sorted(n for n in ODL_NODES if n not in ROUTERS)
+    return {"devices": ROUTERS + extra, "routers": ROUTERS, "odl": CLIENT.base, "user": CLIENT.user,
+            "mounted": sorted(ODL_NODES) if not TOPOLOGY_ERROR["text"] else None,
+            "topologyError": TOPOLOGY_ERROR["text"],
+            "status": {n: ODL_NODES.get(n, "") for n in ROUTERS + extra}}
 
 
 def known_router(node):
@@ -82,6 +99,10 @@ PAGE = r"""<!doctype html>
 <body>
 <header><h1>Cisco IOS-XR viewer</h1><span class="meta" id="meta"></span></header>
 <div class="bar">
+  <label>ODL <input id="odl" size="26" placeholder="http://controller:8181"></label>
+  <input id="odlUser" size="8" placeholder="user">
+  <input id="odlPass" type="password" size="10" placeholder="password (same if empty)">
+  <button id="setOdl" title="Use this controller: the router list is reloaded from its topology">Use ODL</button>
   <label>Router <select id="dev"></select></label>
   <button class="primary" id="runOne">Run all queries</button>
   <button id="runEvery">Run all routers</button>
@@ -272,13 +293,26 @@ document.addEventListener("input", e => {
   }
 });
 
-Promise.all([fetch("/api/devices").then(r => r.json()), fetch("/api/queries").then(r => r.json())]).then(([d, q]) => {
+function showDevices(d){
   devices = d.devices;
   routers = d.routers || d.devices;
-  queries = q.queries;
   const st = d.status || {};
-  $("dev").innerHTML = devices.map(x => `<option value="${esc(x)}">${esc(x)}${st[x] && st[x] !== "connected" ? " (" + esc(st[x]) + ")" : ""}</option>`).join("");
-  $("meta").textContent = "ODL: " + d.odl + " · " + queries.length + " queries";
+  $("dev").innerHTML = devices.map(x => `<option value="${esc(x)}">${esc(x)}${st[x] && st[x] !== "connected" ? " (" + esc(st[x]) + ")" : ""}${d.mounted && !d.mounted.includes(x) ? " (not on this ODL)" : ""}</option>`).join("");
+  $("odl").value = d.odl;
+  $("odlUser").value = d.user || "";
+  $("meta").textContent = "ODL: " + d.odl + " · " + (d.mounted ? d.mounted.length + " Cisco nodes mounted" : "topology not read") + " · " + queries.length + " queries";
+  if (d.topologyError) say("Could not read the ODL topology: " + d.topologyError);
+}
+$("setOdl").onclick = () => guard(async () => {
+  say("Switching ODL and reading its topology...");
+  const d = await post("/api/odl", {base: $("odl").value.trim(), user: $("odlUser").value.trim(), password: $("odlPass").value});
+  $("odlPass").value = "";
+  showDevices(d);
+  say(`Using ODL ${d.odl}: ${d.mounted ? d.mounted.length : 0} Cisco nodes mounted. Pick a router.`);
+});
+Promise.all([fetch("/api/devices").then(r => r.json()), fetch("/api/queries").then(r => r.json())]).then(([d, q]) => {
+  queries = q.queries;
+  showDevices(d);
 });
 </script>
 </body></html>
@@ -312,11 +346,7 @@ class Handler(BaseHTTPRequestHandler):
         if path in ("/", "/index.html"):
             self._send(200, PAGE_HTML, "text/html; charset=utf-8")
         elif path == "/api/devices":
-            ODL_NODES.clear()
-            ODL_NODES.update(odl_cisco_nodes())
-            extra = sorted(n for n in ODL_NODES if n not in ROUTERS)
-            self._json(200, {"devices": ROUTERS + extra, "routers": ROUTERS, "odl": CLIENT.base,
-                             "status": {n: ODL_NODES.get(n, "") for n in ROUTERS + extra}})
+            self._json(200, devices_payload())
         elif path == "/api/queries":
             self._json(200, {"queries": [{"id": q, "label": m["label"]} for q, m in queries.QUERIES.items()]})
         elif path == "/report":
@@ -335,6 +365,8 @@ class Handler(BaseHTTPRequestHandler):
                 self._run_query(self._body())
             elif path == "/api/build-report":
                 self._build_report()
+            elif path == "/api/odl":
+                self._set_odl(self._body())
             elif path == "/api/e2e-collect":
                 self._e2e_collect(self._body())
             else:
@@ -362,6 +394,19 @@ class Handler(BaseHTTPRequestHandler):
             self._json(200, {"ok": True, "tables": tables, "data": read_json(entry[1]).get("data")})
         else:
             self._json(200, {"ok": False, "error": sec["error"]})
+
+    def _set_odl(self, req):
+        """Switch the controller this viewer queries (dev / prod), optionally with other credentials."""
+        base = str(req.get("base") or "").strip().rstrip("/")
+        if not ODL_RE.match(base):
+            self._json(400, {"error": f"not a controller URL: {base!r} (expected e.g. http://10.218.66.24:8181)"})
+            return
+        CLIENT.base = base
+        if req.get("user"):
+            CLIENT.user = str(req["user"])
+        if req.get("password"):
+            CLIENT.password = str(req["password"])
+        self._json(200, devices_payload())
 
     def _e2e_collect(self, req):
         """Fetch the far-end PEs of one router's services and save them for the End-to-end tab."""

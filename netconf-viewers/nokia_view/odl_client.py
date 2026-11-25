@@ -22,6 +22,10 @@ class OdlError(Exception):
     """ODL is unreachable, rejected the request, or returned NETCONF errors."""
 
 
+class NotMountedError(OdlError):
+    """The router is not mounted on this ODL controller (wrong controller, or the mount was removed)."""
+
+
 class OdlClient:
     def __init__(self, base=None, user=None, password=None, cookie=None, timeout=180):
         self.base = (base or os.environ.get("ODL_BASE") or "http://10.137.202.20:8181").rstrip("/")
@@ -85,7 +89,14 @@ class OdlClient:
             status, text = self._request("POST", path, xml_input, "application/xml")
         else:
             status, text = self._request("POST", path, json.dumps(json_input), "application/json")
-        return self._parse(status, text)
+        try:
+            return self._parse(status, text)
+        except OdlError as exc:
+            if "Mount point does not exist" in str(exc):
+                raise NotMountedError(
+                    f"node {node} is not mounted on ODL {self.base} (Mount point does not exist). Check that ODL_BASE "
+                    f"is the controller that has this router: dev and prod mount different routers.") from exc
+            raise
 
     def netconf_get(self, node, kind, inner_xml):
         """kind 'state' uses ietf-netconf:get; kind 'config' uses get-config on the running datastore."""

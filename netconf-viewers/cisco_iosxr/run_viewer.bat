@@ -1,4 +1,5 @@
 @echo off
+setlocal
 rem ============================================================
 rem  Cisco IOS-XR viewer - starts viewer.py and opens the control page.
 rem  On the page: pick a router, Run all queries, Build report, Open report.
@@ -6,7 +7,8 @@ rem  Routers are listed in viewer.py (ROUTERS) or set ROUTERS below.
 rem ============================================================
 
 rem ---- ODL settings (edit these) ----
-set "ODL_BASE=http://10.137.202.20:8181"
+rem The controller is asked for when the script starts (choose_odl.bat): dev and prod mount different routers.
+call "%~dp0..\choose_odl.bat"
 set "ODL_USER=admin"
 rem Leave the password empty to be asked for it when the script starts.
 set "ODL_PASSWORD="
