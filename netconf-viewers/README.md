@@ -25,6 +25,28 @@ CE ─LLDP─ SAP / AC ─ [this PE: service] ─ PW (SDP + LSP / LDP-SR) ─ [f
 
 The Nokia **Service trace** tab also shows the far ends of the selected service.
 
+### Layout and live trace (as in the Service-LDP-E2E dashboard)
+
+Click a service to see:
+- **Header:** the title, "node → N peers | type", and badges for vendor, type, signaling, peers and
+  CEs found.
+- **Chain:** LOCAL CE → AC → LOCAL PE → service (bridge domain, VPLS, epipe, xconnect) → signaling
+  (BGP-AD + LDP, T-LDP) → MPLS CORE → REMOTE PE → REMOTE CE.
+- **All N peer paths:** one row per pseudowire peer: service (VFI, VPN-ID, VPLS-ID or VC-ID) → T-LDP
+  (session state and uptime) → remote PE (vendor, address, name) → remote CE (name and port, "no LLDP
+  on PE", "PE unreachable" with the reason, or "not collected"). Each row expands to its transport path
+  and connected ports.
+
+**Trace far ends live** (open the report from the viewer: Device report tab) asks each far-end PE
+about this one service now, the way the dashboard does:
+- **Nokia far end:** `show service id N base`, `show service id N sap` and `show system lldp neighbor`
+  through the NETCONF CLI call. N is the same service id, the Cisco VPN-ID, or the VC id.
+- **Cisco far end:** LLDP plus `l2vpn/database/bridge-domain-groups` (VPLS) or `xconnect-groups`
+  (point to point). The service is matched by VC/PW id, VPLS-ID, VPN-ID or bridge-domain name.
+
+The result is saved in `e2e_traces/<node>/<service>.json` and is used by every later report build.
+It is much lighter than **Collect far ends**, which fetches each far end's whole query set.
+
 ### Transport path and connected ports
 
 Under each pseudowire, **Transport path and connected ports** shows how the service crosses the core,

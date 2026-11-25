@@ -30,6 +30,18 @@ def obj(kind, node, ident, title, subtitle="", status=None, fields=None, tables=
             "tables": [t for t in (tables or []) if t.get("rows")], "links": links or [], "raw": raw}
 
 
+def fmt_uptime(seconds):
+    """'36d 7h' or '15h 34m', as the dashboard shows LDP session uptime."""
+    try:
+        sec = int(float(seconds))
+    except (TypeError, ValueError):
+        return ""
+    if sec <= 0:
+        return ""
+    d, h, m = sec // 86400, (sec % 86400) // 3600, (sec % 3600) // 60
+    return f"{d}d {h}h" if d else f"{h}h {m}m"
+
+
 def num(x, default=0):
     try:
         return int(float(x))

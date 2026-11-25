@@ -13,14 +13,14 @@ Uses these nokia_view queries when they are saved (each one is optional):
   system                   system name
 Hop-by-hop LSP paths come from nokia_view/pce-lsp-inventory.csv when it is there (PCEP export).
 """
-from .transport import PceIndex, hop_list, key, link, nokia_port, num, obj, port_issue
+from .transport import PceIndex, fmt_uptime, hop_list, key, link, nokia_port, num, obj, port_issue
 from .util import as_list, get, norm_state, text, unwrap, walk_dicts
 
 QUERIES = ["config-services", "epipe-state", "vpls-state", "sdp-state", "lldp", "port-state",
-           "mpls-lsp-state", "rsvp", "router-interface-state", "config-router-config", "lag", "system"]
+           "mpls-lsp-state", "rsvp", "router-interface-state", "config-router-config", "lag", "system", "ldp"]
 # The set fetched for a far-end PE: its side of each service, its CE, and its transport back.
 FAR_END_QUERIES = ["config-services", "epipe-state", "vpls-state", "sdp-state", "lldp", "port-state",
-                   "mpls-lsp-state", "rsvp", "router-interface-state", "config-router-config", "lag", "system"]
+                   "mpls-lsp-state", "rsvp", "router-interface-state", "config-router-config", "lag", "system", "ldp"]
 SERVICE_TYPES = ("epipe", "vpls", "vprn")
 
 
@@ -51,6 +51,21 @@ def lldp_neighbours(data):
                     "mgmt": next((m for m in mgmt if m), ""),
                     "scope": dm.get("mac-type") or "",
                 })
+    return out
+
+
+def ldp_sessions(data):
+    """{peer address: LDP session} from nokia-state router > ldp > session (targeted sessions signal the PWs)."""
+    out = {}
+    for r in as_list(get(unwrap(data), "state", "router")):
+        for ses in as_list(get(r, "ldp", "session")):
+            peer = str(ses.get("peer-lsr-id") or "").split(":")[0]
+            if peer:
+                up = ses.get("up-time")
+                out[peer] = {"state": "Oper" if ses.get("state") == "operational" else (ses.get("state") or ""),
+                             "peerState": ses.get("state") or "", "uptimeS": round(num(up) / 100) if up is not None else None,
+                             "uptime": fmt_uptime(num(up) / 100) if up is not None else "",
+                             "clients": [ses.get("adjacency-type") or ""], "holdTime": None}
     return out
 
 
@@ -124,6 +139,7 @@ class _Ctx:
                 cur = self.rsvp.get(lsp)
                 if cur is None or (s.get("oper-state") == "up" and cur.get("oper-state") != "up"):
                     self.rsvp[lsp] = dict(s, _path=path)
+        self.ldp = ldp_sessions(data.get("ldp"))
         self.objects = {}
         self.port_cache = {}
 
@@ -380,7 +396,8 @@ def _endpoint(ctx, stype, sid, c, s, sdps):
             pws.append({"id": bid, "kind": "bgp-auto" if auto else kind.replace("-sdp", ""), "vcId": vc,
                         "sdpId": sdp_id, "peer": sdp.get("farEnd"), "oper": norm_state(oper),
                         "flags": sbx.get("oper-flags") or "", "localStatus": sbx.get("pw-local-status-bits") or "",
-                        "peerStatus": sbx.get("pw-peer-status-bits") or "", "transport": tr})
+                        "peerStatus": sbx.get("pw-peer-status-bits") or "", "transport": tr,
+                        "tldp": ctx.ldp.get(str(sdp.get("farEnd")))})
 
     bgp = c.get("bgp") or {}
     rt = get(c, "vrf-target", "ext-community") or get(bgp, "route-target", "export")
@@ -400,7 +417,9 @@ def _endpoint(ctx, stype, sid, c, s, sdps):
                            link(p["transport"]["lsp"]["name"], p["transport"]["lsp"]["key"]) if p["transport"].get("lsp") else ""]
                           for p in pws]}],
         raw={"config": c, "state": s})
-    return {"key": f"{stype}:{sid}", "type": stype, "id": sid, "name": name, "objKey": svc_key,
+    vpls_id = get(c, "bgp-ad", "vpls-id", "vpls-id")
+    signaling = ("MP-BGP (L3VPN)" if stype == "vprn" else ("BGP-AD + T-LDP" if vpls_id else ("T-LDP" if pws else "local")))
+    return {"key": f"{stype}:{sid}", "type": stype, "id": sid, "name": name, "objKey": svc_key, "signaling": signaling,
             "description": text(c.get("description")), "customer": text(c.get("customer")),
             "oper": norm_state(oper), "adminShutdown": bool(c.get("shutdown")),
             "vplsId": get(c, "bgp-ad", "vpls-id", "vpls-id"), "routeTarget": rt,

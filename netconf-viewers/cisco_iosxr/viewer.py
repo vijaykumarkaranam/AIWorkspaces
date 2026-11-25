@@ -383,6 +383,8 @@ class Handler(BaseHTTPRequestHandler):
                 self._build_report()
             elif path == "/api/odl":
                 self._set_odl(self._body())
+            elif path == "/api/e2e-trace":
+                self._e2e_trace(self._body())
             elif path == "/api/e2e-collect":
                 self._e2e_collect(self._body())
             else:
@@ -434,9 +436,27 @@ class Handler(BaseHTTPRequestHandler):
         if parent not in sys.path:
             sys.path.insert(0, parent)
         import e2e.collect as collect
-        items = collect.collect_far_ends(node, collect.make_client(CLIENT.base),
-                                         collect.Inventory(cisco_dir=bcr.RESULTS))
+        # CLIENT, not a new client: keeps the controller and credentials chosen with "Use ODL".
+        items = collect.collect_far_ends(node, CLIENT, collect.Inventory(cisco_dir=bcr.RESULTS))
         self._json(200, {"node": node, "results": items})
+
+    def _e2e_trace(self, req):
+        """Trace one service's far ends live (the dashboard's method) and return the refreshed service."""
+        node, service = str(req.get("node") or ""), str(req.get("service") or "")
+        if not IP_RE.match(node) or not os.path.isdir(os.path.join(bcr.RESULTS, node)) or not service:
+            self._json(400, {"error": f"no saved data for router {node!r}, or no service given"})
+            return
+        _e2e_collect_module()  # puts the netconf-viewers folder on the path
+        import e2e.sources
+        import e2e.trace
+        try:
+            res = e2e.trace.trace_service(node, service, CLIENT, e2e.sources.Inventory(cisco_dir=bcr.RESULTS))
+        except ValueError as exc:
+            self._json(400, {"error": str(exc)})
+            return
+        payload = e2e.trace.traced_service_payload(node, service, e2e.sources.Inventory(cisco_dir=bcr.RESULTS))
+        payload["trace"] = res
+        self._json(200, payload)
 
     def _build_report(self):
         bcr.main()  # writes results\cisco_report.html and prints the path

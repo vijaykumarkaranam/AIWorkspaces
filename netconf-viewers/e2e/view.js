@@ -45,19 +45,6 @@ const E2E = (() => {
     const rows = acs.map(a => `<div style="display:flex;align-items:center">${reverse ? acBox(a) + arrow + ceBox(a.ce) : ceBox(a.ce) + arrow + acBox(a)}</div>`);
     return [`<div class="e2e-stack">${rows.join("")}</div>`];
   }
-  function pwLink(pw) {
-    const st = pw.oper === "up" ? "" : (pw.oper === "unknown" ? "unknown" : "down");
-    const tr = pw.transport || {};
-    const lsp = tr.lsp;
-    return `<div class="e2e-pw"><div><b>${esc(pw.kind)}</b> <span class="mono">${esc(pw.id)}</span></div><div class="ln ${st}"></div>
-      <div>${pill(pw.oper)} ${esc(tr.type || "")}${tr.label ? ` · label <span class="mono">${esc(tr.label)}</span>` : ""}</div>
-      ${pw.pwLabels ? `<div class="small">VC label <span class="mono">${esc(pw.pwLabels.local)} / ${esc(pw.pwLabels.remote)}</span> <span class="muted">local / remote</span></div>` : ""}
-      ${tr.sdpKey ? `<div>${ol(tr.sdpKey, "SDP " + esc(pw.sdpId))} ${pill(tr.sdpOper)}</div>` : ""}
-      ${lsp ? `<div>${ol(lsp.key, "LSP " + esc(lsp.name))} ${pill(lsp.oper)}</div>` : ""}
-      ${tr.routeKey ? `<div>${ol(tr.routeKey, esc(tr.name))}</div>` : (!tr.sdpKey && !lsp && tr.name ? `<div class="mono">${esc(tr.name)}</div>` : "")}
-      ${pw.peerStatus ? `<div style="color:var(--bad)">far end: ${esc(pw.peerStatus)}</div>` : ""}</div>`;
-  }
-
   /* ---------------- transport detail */
   function portCell(p) {
     if (!p) return '<span class="muted">—</span>';
@@ -111,45 +98,138 @@ const E2E = (() => {
         w.final ? "pe" : "")).join(arrow) + "</div>";
   }
 
-  /* ---------------- service paths */
-  function localBox(rec, model) {
-    const pe = model ? `${ol(model.peKey, esc(model.name))} <span class="muted mono">${esc(model.node)}</span>` : "";
-    return box("Local PE · " + rec.type, `${pe ? pe + "<br>" : ""}${esc(rec.name)}`,
-      `<div>${pill(rec.oper)} <span class="mono muted">${esc(rec.id)}</span></div>` +
-      (rec.vplsId ? `<div class="muted">VPLS-ID ${esc(rec.vplsId)}</div>` : "") +
-      (rec.routeTarget ? `<div class="muted">RT ${esc(rec.routeTarget)}</div>` : ""), "pe", rec.objKey);
+  /* ---------------- service paths (laid out like the Service-LDP-E2E dashboard) */
+  const VEND = {cisco: "Cisco", nokia: "Nokia"};
+  const SVC_HEAD = {"bridge-domain": "Bridge domain", vpls: "VPLS", epipe: "Epipe", p2p: "XConnect", vprn: "VPRN (L3VPN)", service: "Service"};
+
+  function stage(kind, head, icon, small, name, details, k, dashed) {
+    const click = has(k) ? ` data-e2e-obj="${esc(k)}" title="Click for full details"` : "";
+    return `<div class="e2e-stage s-${kind}${dashed ? " dashed" : ""}${click ? " click" : ""}"${click}>
+      <div class="sh">${esc(head)}</div>
+      <div class="sb"><div class="si">${icon}</div><div class="ss">${esc(small || "")}</div><div class="sn">${name}</div>
+      ${details && details.length ? `<div class="sd">${details.filter(Boolean).map(d => `<div>${d}</div>`).join("")}</div>` : ""}</div></div>`;
   }
+  const conn = label => `<div class="e2e-conn"><div class="ln"></div><div>${esc(label || "")}</div></div>`;
+  const kv = (l, v) => v === undefined || v === null || v === "" ? "" : `${esc(l)}: <b>${esc(v)}</b>`;
+
+  /* The far end shown in the headline: one whose CE was found, a cross-vendor one first (as the dashboard does). */
+  function headlineLeg(rec) {
+    const withCe = rec.legs.filter(l => l.remote && (l.remote.acs || []).some(a => a.ce));
+    const other = withCe.find(l => l.farEnd.vendor && l.farEnd.vendor !== rec.vendor);
+    return other || withCe[0] || rec.legs.find(l => l.remote) || rec.legs[0] || null;
+  }
+  function remoteCe(leg) {
+    const ac = leg && leg.remote && (leg.remote.acs || []).find(a => a.ce);
+    return ac ? ac.ce : null;
+  }
+  function ceStatus(leg) {
+    const fe = leg.farEnd;
+    if (remoteCe(leg)) return "ce";
+    if (fe.status === "unreachable" || fe.status === "no-address") return "unreachable";
+    if (fe.status === "not-collected") return "missing";
+    if (fe.status === "no-service") return "noservice";
+    if (fe.status === "self") return "self";
+    return "nolldp";
+  }
+
+  function chainHTML(rec, model) {
+    const acs = rec.acs || [], ac = acs[0], ce = ac && ac.ce, l = headlineLeg(rec);
+    const tr = l ? l.pw.transport || {} : {};
+    const t = l ? l.pw.tldp : null, rce = remoteCe(l), fe = l ? l.farEnd : null;
+    const vendor = VEND[model.vendor] || model.vendor || "";
+    let h = stage("ce", "Local CE", "▣", "Customer A", ce ? esc(ce.name) : '<span class="muted">not seen by LLDP</span>',
+                  ce ? [kv("Port", ce.port), kv("Chassis", ce.chassis), ce.mgmt ? kv("Mgmt", ce.mgmt) : ""] : [], null, !ce);
+    h += conn("Access");
+    h += stage("ac", ac && ac.interface ? "Routed interface" : "AC", "⏚", "Attachment circuit",
+               ac ? `<span class="mono">${esc(ac.id)}</span>` : '<span class="muted">none</span>',
+               ac ? [pill(ac.oper), kv("Total ACs", acs.length), ac.description ? esc(ac.description) : ""] : [kv("Total ACs", 0)],
+               ac && ac.portKey, !ac);
+    h += conn(rec.type === "bridge-domain" ? "BD" : "Service");
+    h += stage("pe", "Local PE", "◆", vendor, ol(model.peKey, esc(model.node)), [esc(model.name), kv("Group", rec.group), kv("Type", rec.type)], null);
+    h += conn("");
+    h += stage("svc", SVC_HEAD[rec.type] || rec.type, "●", rec.type === "bridge-domain" ? "VPLS" : rec.type.toUpperCase(),
+               esc(rec.vfi || rec.name), [kv(rec.vpnId != null ? "VPN-ID" : "Service id", rec.vpnId != null ? rec.vpnId : rec.id),
+               rec.vfi ? kv("VFI", rec.vfi) : "", pill(rec.oper)], rec.objKey);
+    h += conn(rec.signaling || "");
+    h += stage("sig", rec.signaling || "Signaling", "◉", rec.signaling || "", esc(rec.rd || rec.vplsId || (l ? l.pw.vcId : "") || "—"),
+               [kv("RD", rec.rd), rec.vplsId && rec.vplsId !== rec.rd ? kv("VPLS-ID", rec.vplsId) : "",
+                t ? `T-LDP: <b>${esc(t.state || "?")}</b>${t.uptime ? " · " + esc(t.uptime) : ""}` : ""], null);
+    h += conn("MPLS");
+    const coreName = tr.lsp ? ol(tr.lsp.key, esc(tr.lsp.name)) : (tr.routeKey ? ol(tr.routeKey, esc((tr.name || "").split(" via ")[0])) : esc(tr.type || "—"));
+    h += stage("core", "MPLS core", "☁", "Transport", coreName,
+               [esc(tr.type || ""), tr.label ? kv("Label", tr.label) : "", tr.lsp ? `LSP ${pill(tr.lsp.oper)}` : "",
+                (tr.paths || [])[0] ? kv("Next hop", (tr.paths[0].nextHopName || tr.paths[0].nextHop)) : "",
+                t ? `T-LDP: <b>${esc(t.state || "?")}</b>${t.uptime ? " · " + esc(t.uptime) : ""}` : ""], null, true);
+    h += conn("");
+    h += stage("rpe", "Remote PE", "◆", fe && fe.vendor ? (VEND[fe.vendor] || fe.vendor) : "Far end",
+               fe ? ol(fe.peKey, esc(fe.ip || "?")) : '<span class="muted">none</span>',
+               fe ? [fe.name && fe.name !== fe.ip ? esc(fe.name) : "", rce ? "CE discovered" : pill(fe.status),
+                     fe.matchedBy ? `<span class="muted">${esc(fe.matchedBy)}</span>` : ""] : [], null, !fe || fe.status !== "matched");
+    h += conn("Access");
+    h += stage("ce", "Remote CE", "▣", "Customer B", rce ? esc(rce.name) : '<span class="muted">not discovered</span>',
+               rce ? [kv("Port", rce.port), kv("Chassis", rce.chassis)] : [fe && fe.status === "not-collected" ? "Trace far ends to find it" : "LLDP not available"],
+               null, !rce);
+    return `<div class="e2e-stages">${h}</div>`;
+  }
+
+  function peerRowsHTML(rec, model) {
+    if (!rec.legs.length) return '<p class="muted">No pseudowires: this service does not leave the PE through a pseudowire.</p>';
+    const rows = rec.legs.map(l => {
+      const fe = l.farEnd, t = l.pw.tldp, cs = ceStatus(l), ce = remoteCe(l), tr = l.pw.transport || {};
+      const svcCell = rec.type === "bridge-domain" || rec.type === "vpls"
+        ? `<div class="pt">${rec.vfi ? "VFI: " + esc(rec.vfi) : esc(rec.name)}</div><div>${rec.vpnId != null ? "VPN-ID: " + esc(rec.vpnId) : "Service " + esc(rec.id)}</div>${rec.vplsId ? `<div class="pc">VPLS-ID: ${esc(rec.vplsId)}</div>` : ""}`
+        : `<div class="pt">${esc(l.pw.kind)} ${esc(l.pw.id)}</div><div>VC-ID: ${esc(l.pw.vcId)}</div>${tr.sdpKey ? `<div>${ol(tr.sdpKey, "SDP " + esc(l.pw.sdpId))}</div>` : ""}`;
+      const tldpCell = `<div class="pt">${t && /targeted|AToM/i.test((t.clients || []).join(" ")) ? "T-LDP" : (rec.signaling || "PW").replace(/^BGP-AD \+ /, "")}</div>
+        <div>${t && t.uptime ? esc(t.uptime) : "—"}</div><div>${t ? pill(/oper/i.test(t.state) ? "up" : t.state || "unknown") : pill(l.pw.oper)}</div>`;
+      const peCell = `<div class="pt">${fe.vendor ? (fe.vendor === "nokia" ? "◆ NOKIA" : "◆ CISCO") : "◇ UNKNOWN"}</div>
+        <div class="pn">${ol(fe.peKey, esc(fe.ip || "?"))}</div>${fe.name && fe.name !== fe.ip ? `<div>${esc(fe.name)}</div>` : ""}<div>${pill(l.pw.oper)}</div>`;
+      const ceCell = cs === "ce" ? `<div class="pt">▣ Remote CE</div><div class="pn">${esc(ce.name)}</div><div>${esc(ce.port || "")}</div>${l.remote && l.remote.acs ? `<div class="muted">${esc(((l.remote.acs || []).find(a => a.ce) || {}).id || "")}</div>` : ""}`
+        : cs === "unreachable" ? `<div class="pt">⚠ PE unreachable</div><div>${esc(fe.error || "NETCONF / ODL error")}</div>`
+        : cs === "missing" ? `<div class="pt">? Remote CE</div><div>far end not collected</div><div class="muted">Trace far ends or Collect far ends</div>`
+        : cs === "noservice" ? `<div class="pt">? Service not found</div><div>on the far-end PE</div>`
+        : cs === "self" ? `<div class="pt">same PE</div>`
+        : `<div class="pt">? Remote CE</div><div>Not discovered</div><div class="muted">No LLDP on PE</div>`;
+      const back = l.remotePw && l.remotePw.transport ? transportHTML(l.remotePw.transport, `Return path from ${fe.name || fe.ip}`) : "";
+      return `<div class="e2e-prow b-${cs}">
+          <div class="e2e-pcell">${svcCell}</div><span class="e2e-arrow">→</span>
+          <div class="e2e-pcell">${tldpCell}</div><span class="e2e-arrow">→</span>
+          <div class="e2e-pcell v-${fe.vendor || "x"}">${peCell}</div><span class="e2e-arrow">→</span>
+          <div class="e2e-pcell c-${cs}">${ceCell}</div>
+          <details class="e2e-tr"><summary>Transport path and connected ports</summary>
+            ${transportHTML(tr, "Outbound from this PE")}${walkHTML(l.walk)}${back}</details>
+        </div>`;
+    }).join("");
+    return `<h4 style="margin:14px 0 8px">All ${rec.legs.length} ${rec.type === "bridge-domain" || rec.type === "vpls" ? "VPLS peer" : "pseudowire"} paths${rec.tracedAt ? ` <span class="muted small">· live trace ${esc(rec.tracedAt.replace("T", " "))}</span>` : ""}</h4>
+      <div class="e2e-prows">${rows}</div>`;
+  }
+
+  function accessListHTML(rec) {
+    if ((rec.acs || []).length < 2) return "";
+    return `<details class="e2e-tr" style="margin-top:8px"><summary>All ${rec.acs.length} access circuits</summary>
+      <div class="e2e-path">${accessColumn(rec.acs).join("")}</div></details>`;
+  }
+
+  function headerHTML(rec, model) {
+    const remoteCes = rec.legs.filter(l => remoteCe(l)).length, localCes = (rec.ces || []).length;
+    const vendor = VEND[model.vendor] || model.vendor || "";
+    const canTrace = /^https?:$/.test(location.protocol) && rec.legs.length;
+    return `<div class="e2e-hdr"><div><div class="e2e-title">◆ ${esc(vendor)} E2E path · ${ol(rec.objKey, esc(rec.id))} ${pill(rec.status)}</div>
+        <div class="muted">${esc(model.node)} → ${rec.legs.length} peer(s) | ${esc((SVC_HEAD[rec.type] || rec.type))}${rec.name && rec.name !== rec.id ? " · " + esc(rec.name) : ""}</div>
+        <div class="e2e-badges"><span class="bd b-v">${esc(vendor)}</span><span class="bd b-t">${esc(SVC_HEAD[rec.type] || rec.type)}</span>
+          ${rec.signaling ? `<span class="bd b-s">${esc(rec.signaling)}</span>` : ""}<span class="bd b-p">${rec.legs.length} peers</span>
+          <span class="bd b-c">${localCes} local / ${remoteCes} remote CE(s) found</span></div></div>
+      <div class="e2e-traceb">${canTrace
+        ? `<button class="btn primary" data-e2e-trace="${esc(rec.key)}" title="Ask each far-end PE about this service now (Nokia: service sap and LLDP; Cisco: LLDP and L2VPN config), as the E2E dashboard does">Trace far ends live</button><div class="small muted" data-e2e-tracemsg></div>`
+        : (rec.legs.length ? '<div class="small muted">Open this report from the viewer (Device report tab) to trace far ends live.</div>' : "")}</div></div>`;
+  }
+
   function pathsHTML(rec, model) {
     if (model) CUR = model;
-    const h = `<h4 style="margin:10px 0 4px">Local side</h4><div class="e2e-path">${accessColumn(rec.acs).join("")}${arrow}${localBox(rec, model)}</div>`;
-    return h + legsHTML(rec, model);
+    return chainHTML(rec, model) + accessListHTML(rec) + peerRowsHTML(rec, model);
   }
   function legsHTML(rec, model) {
     if (model) CUR = model;
-    if (!rec.legs.length) return '<p class="muted">No pseudowires: this service does not leave the PE through a pseudowire.</p>';
-    const local = box("From", model ? esc(model.name) : "this PE", "", "pe", model && model.peKey);
-    let h = `<h4 style="margin:10px 0 4px">Pseudowires and far ends (${rec.legs.length})</h4>`;
-    for (const l of rec.legs) {
-      const fe = l.farEnd, r = l.remote;
-      const feBox = box("Far-end PE" + (fe.vendor ? " · " + fe.vendor : ""),
-        `${esc(fe.name || fe.ip || "?")}${fe.node && fe.node !== fe.ip ? ` <span class="muted mono">${esc(fe.node)}</span>` : ""}`,
-        `<div class="mono muted">${esc(fe.ip || "")}</div><div>${pill(fe.status)}</div>` +
-        (fe.matchedBy ? `<div class="muted">matched by ${esc(fe.matchedBy)}</div>` : ""),
-        fe.status === "matched" ? "pe" : "miss", fe.peKey);
-      let tail = "";
-      if (r) {
-        const rpw = l.remotePw;
-        tail = arrow + box("Far-end service · " + r.type, esc(r.name),
-          `<div>${pill(r.oper)} <span class="mono muted">${esc(r.id)}</span></div>` +
-          (rpw ? `<div class="muted">PW <span class="mono">${esc(rpw.id)}</span> ${pill(rpw.oper)}</div>` : ""), r.oper === "down" ? "bad" : "", r.objKey) +
-          arrow + accessColumn(r.acs, true).join("");
-      }
-      const back = l.remotePw && l.remotePw.transport ? transportHTML(l.remotePw.transport, `Return path from ${fe.name || fe.ip}`) : "";
-      h += `<div class="e2e-path">${local}${pwLink(l.pw)}${feBox}${tail}</div>
-        <details class="e2e-tr"${rec.legs.length <= 3 ? " open" : ""}><summary>Transport path and connected ports · ${esc(l.pw.id)} → ${esc(fe.name || fe.ip || "?")}</summary>
-        ${transportHTML(l.pw.transport, "Outbound from this PE")}${walkHTML(l.walk)}${back}</details>`;
-    }
-    return h;
+    return peerRowsHTML(rec, model);
   }
 
   function issuesList(list) {
@@ -278,11 +358,40 @@ const E2E = (() => {
           <select data-e2e-sel><option value="">All statuses</option>${ORDER.map(o => `<option value="${o}" ${st.status === o ? "selected" : ""}>${esc(LABEL[o] || o)}</option>`).join("")}</select>
           <span class="muted small">${list.length} of ${model.services.length} services · click a row for its path</span></div>
         <div class="tw"><table><thead><tr><th>Status</th><th>Service</th><th>CE</th><th class="num">ACs up</th><th class="num">Far ends found</th><th>Main issue</th></tr></thead><tbody>${body}</tbody></table></div>
-        <div class="e2e-detail" id="e2e-detail">${sel ? `<div class="card"><h3 style="margin-top:0">${ol(sel.objKey, `${esc(sel.type)} ${esc(sel.id)} · ${esc(sel.name)}`)} ${pill(sel.status)}</h3>
+        <div class="e2e-detail" id="e2e-detail">${sel ? `<div class="card e2e-svc">${headerHTML(sel, model)}
           ${sel.description ? `<p class="muted">${esc(sel.description)}</p>` : ""}${issuesHTML(sel)}${pathsHTML(sel, model)}</div>` : ""}</div>`;
+    }
+    async function trace(key, btn) {
+      const msg = wrap.querySelector("[data-e2e-tracemsg]");
+      const t0 = Date.now();
+      btn.disabled = true;
+      const tick = setInterval(() => { if (msg) msg.textContent = `Asking each far-end PE through ODL... ${Math.round((Date.now() - t0) / 1000)} s`; }, 1000);
+      try {
+        const r = await fetch("/api/e2e-trace", {method: "POST", headers: {"Content-Type": "application/json"},
+                                                  body: JSON.stringify({node: model.node, service: key})});
+        const j = await r.json();
+        if (!r.ok) throw new Error(j.error || ("HTTP " + r.status));
+        const i = model.services.findIndex(s => s.key === key);
+        if (i >= 0 && j.service) model.services[i] = j.service;
+        Object.assign(model.objects, j.objects || {});
+        if (j.counts) model.counts = j.counts;
+        if (j.farEnds) model.farEnds = j.farEnds;
+        clearInterval(tick);
+        draw();
+        const peers = Object.values((j.trace || {}).peers || {});
+        const m2 = wrap.querySelector("[data-e2e-tracemsg]");
+        if (m2) m2.textContent = `Traced ${peers.length} far end(s): ${peers.filter(p => p.status === "ce_found").length} with CE, ` +
+          `${peers.filter(p => p.status === "unreachable").length} unreachable, ${peers.filter(p => p.status === "no-service").length} without the service.`;
+      } catch (err) {
+        clearInterval(tick);
+        if (msg) msg.textContent = "Trace failed: " + err.message;
+        btn.disabled = false;
+      }
     }
     wrap.addEventListener("click", e => {
       if (e.target.closest("[data-e2e-obj]")) return;
+      const tb = e.target.closest("[data-e2e-trace]");
+      if (tb) { trace(tb.dataset.e2eTrace, tb); return; }
       const k = e.target.closest("[data-e2e-status]");
       if (k) { st.status = st.status === k.dataset.e2eStatus ? "" : k.dataset.e2eStatus; draw(); return; }
       const tr = e.target.closest("tr[data-e2e-key]");

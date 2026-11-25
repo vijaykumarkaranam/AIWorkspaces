@@ -21,14 +21,15 @@ a PW whose next hop is valid is counted as up.
 """
 import ipaddress
 
-from .transport import cisco_port, key, link, num, obj, port_issue
+from .transport import cisco_port, fmt_uptime, key, link, num, obj, port_issue
 from .util import as_list, find_key, get, norm_state, port_of, walk_dicts
 
 QUERIES = ["e2e-xconnect-config", "e2e-bridge-config", "cisco-l2vpn-config", "e2e-xconnect-oper", "e2e-bridge-ports",
+           "e2e-ldp-neighbors",
            "e2e-l2fibx-cons", "cisco-l2vpn", "e2e-bridge-oper", "cisco-interfaces-xr", "e2e-interface-config",
            "cisco-lldp-native", "cisco-rib-ipv4", "cisco-ethernet-stats"]
 # For a far-end PE: the targeted reads the dashboard uses, not the whole L2VPN database or L2FIB node.
-FAR_END_QUERIES = ["e2e-xconnect-config", "e2e-bridge-config", "e2e-xconnect-oper", "e2e-bridge-ports",
+FAR_END_QUERIES = ["e2e-xconnect-config", "e2e-bridge-config", "e2e-xconnect-oper", "e2e-bridge-ports", "e2e-ldp-neighbors",
                    "e2e-l2fibx-cons", "e2e-bridge-oper", "cisco-interfaces-xr", "e2e-interface-config",
                    "cisco-lldp-native", "cisco-rib-ipv4", "cisco-ethernet-stats"]
 
@@ -56,6 +57,21 @@ def xconnect_oper(data):
         out[(str(xc.get("group-name") or ""), str(xc["xconnect-name"]))] = rec
     return out
 BACKUP_FLAG = 0x100
+
+
+def ldp_neighbors(data):
+    """{lsr-id: T-LDP session} from mpls-ldp neighbors: state (Oper), uptime, clients (AToM = pseudowires)."""
+    out = {}
+    for n in as_list(find_key(data or {}, "neighbor")):
+        if not isinstance(n, dict) or not n.get("lsr-id"):
+            continue
+        proto, det = n.get("protocol-information") or {}, n.get("detailed-information") or {}
+        up = proto.get("ta-up-time-seconds")
+        out[str(n["lsr-id"])] = {"state": proto.get("ta-state") or det.get("peer-state") or "",
+                                 "peerState": det.get("peer-state") or "", "uptimeS": num(up, None) if up is not None else None,
+                                 "uptime": fmt_uptime(up), "clients": [c.get("name") for c in as_list(det.get("client")) if c.get("name")],
+                                 "holdTime": proto.get("ta-holdtime")}
+    return out
 
 
 def vpls_id(v):
@@ -263,6 +279,7 @@ def pe_from_saved(node, data):
                                          data.get("cisco-l2vpn") or {})
     bd_oper = _bridge_oper(data.get("e2e-bridge-oper") or {})
     xc_oper = xconnect_oper(data.get("e2e-xconnect-oper"))
+    ldp = ldp_neighbors(data.get("e2e-ldp-neighbors"))
 
     def ac(name_):
         port = port_of(name_)
@@ -286,6 +303,7 @@ def pe_from_saved(node, data):
              "flags": "", "localStatus": "", "peerStatus": "", "transport": tr}
         if oper and (oper.get("localLabel") or oper.get("remoteLabel")):
             p["pwLabels"] = {"local": oper.get("localLabel"), "remote": oper.get("remoteLabel")}
+        p["tldp"] = ldp.get(str(peer))  # the targeted LDP session that signals this pseudowire
         return p
 
     def first_of(qids, k):
@@ -313,6 +331,7 @@ def pe_from_saved(node, data):
                                   op.get("pws", {}).get((nb.get("neighbor"), str(p.get("pseudowire-id"))))))
             evpn = [f"EVI {e.get('eviid')} AC {e.get('remote-acid')}" for e in as_list(get(xc, "pseudowire-evpns", "pseudowire-evpn"))]
             ep = _endpoint("p2p", k, xc.get("name"), acs, pws, None, None, evpn)
+            ep["signaling"] = "LDP" if pws else ("EVPN" if evpn else "local")
             if op.get("state"):
                 ep["oper"] = norm_state(op["state"])  # the router's own verdict on the xconnect
             endpoints.append(ep)
@@ -330,10 +349,14 @@ def pe_from_saved(node, data):
                     for r in as_list(get(bd, "routed-interfaces", "routed-interface")) if r.get("interface-name")]
             pws = [pw(p.get("neighbor"), p.get("pseudowire-id"), "pw")
                    for p in as_list(get(bd, "bd-pseudowires", "bd-pseudowire"))]
-            vid, vpn = None, None
+            vid, vpn, rd, sig = None, None, None, ""
             for vfi in as_list(get(bd, "vfis", "vfi")):
                 vpn = vpn or vfi.get("vpnid")
-                vid = vid or vpls_id(get(vfi, "bgp-auto-discovery", "ldp-signaling-protocol", "vpls-id"))
+                bad = vfi.get("bgp-auto-discovery") or {}
+                vid = vid or vpls_id(get(bad, "ldp-signaling-protocol", "vpls-id"))
+                rd = rd or vpls_id(bad.get("route-distinguisher"))
+                if bad:
+                    sig = "BGP-AD + LDP" if bad.get("ldp-signaling-protocol") else ("BGP-AD + BGP" if bad.get("bgp-signaling-protocol") else "BGP-AD")
                 pws += [pw(p.get("neighbor"), p.get("pseudowire-id"), "vfi")
                         for p in as_list(get(vfi, "vfi-pseudowires", "vfi-pseudowire"))]
             known = {(p["peer"], p["vcId"]) for p in pws}
@@ -342,6 +365,9 @@ def pe_from_saved(node, data):
                     pws.append(pw(x["peer"], x["pwId"], "bgp-auto"))
             evpn = [f"EVI {e.get('vpn-id')}" for e in as_list(get(bd, "bridge-domain-evis", "bridge-domain-evi"))]
             ep = _endpoint("bridge-domain", f"{gname}/{bname}", bname, acs, pws, vid, vpn, evpn)
+            ep["rd"], ep["group"] = rd, gname
+            ep["signaling"] = sig or ("LDP" if pws else ("EVPN" if evpn else "local"))
+            ep["vfi"] = next((str(v.get("name")) for v in as_list(get(bd, "vfis", "vfi")) if v.get("name")), None)
             op = bd_oper.get((gname, bname))
             if op:
                 ep["oper"] = norm_state(op["state"])

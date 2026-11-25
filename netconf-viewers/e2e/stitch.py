@@ -30,6 +30,41 @@ def _slim(ep):
     return {k: ep.get(k) for k in ("key", "type", "id", "name", "description", "oper", "vplsId", "acs", "objKey")}
 
 
+def _load_trace(node, service_key):
+    from .trace import load_trace  # trace imports this module; load it when needed
+    try:
+        return load_trace(node, service_key)
+    except (OSError, ValueError):
+        return None
+
+
+def _apply_trace(leg, trace, add):
+    """Fill a far end from the saved live trace of this service. True when the trace had this peer."""
+    fe = leg["farEnd"]
+    t = ((trace or {}).get("peers") or {}).get(fe.get("ip"))
+    if not t:
+        return False
+    fe.update(node=fe.get("node") or t.get("odlNode"), vendor=fe.get("vendor") or t.get("vendor"),
+              name=fe.get("name") or t.get("peName"), traced=trace.get("tracedAt"), error=t.get("error") or None)
+    st, rem = t.get("status"), t.get("remote")
+    where = fe.get("name") or fe["ip"]
+    if st in ("ce_found", "no_lldp") and rem:
+        fe.update(status="matched", matchedBy=f"live trace: {t.get('how')}")
+        leg["remote"] = rem
+        if rem.get("oper") == "down":
+            add("critical", f"Far end {where}: service {rem.get('name')} is down (live trace).")
+        for rac in rem.get("acs") or []:
+            if rac.get("oper") in ("down", "admin-down") and not rac.get("adminShutdown"):
+                add("critical", f"Far end {where}: access circuit {rac['id']} is {rac['oper']} (live trace).")
+    elif st == "no-service":
+        fe["status"] = "no-service"
+        add("warning", f"Live trace: {where} has no service matching this one ({t.get('error') or 'not found'}).")
+    else:
+        fe["status"] = "unreachable"
+        add("warning", f"Live trace: far-end PE {where} not reachable through ODL ({t.get('error') or 'error'}).")
+    return True
+
+
 def walk_path(inv, start_pe, peer, max_hops=12):
     """Follow the route to `peer` router by router, as far as routers with a saved RIB reach (Cisco).
 
@@ -147,6 +182,7 @@ def stitch_endpoint(ep, local_pe, inv):
         add("info", "L3 VPN: far ends are the BGP peers that share route-target "
                     f"{ep.get('routeTarget') or '?'}. Pseudowire stitching does not apply.")
 
+    trace = _load_trace(local_pe["node"], ep["key"])
     legs = []
     for pw in ep["pws"]:
         leg = {"pw": pw, "farEnd": {"ip": pw.get("peer"), "node": None, "vendor": None, "name": None,
@@ -175,11 +211,14 @@ def stitch_endpoint(ep, local_pe, inv):
             fe.update(status="self", node=node, vendor=local_pe["vendor"], name=local_pe["name"])
         elif node is None:
             fe.update(status="not-collected")
+            _apply_trace(leg, trace, add)
         else:
             rpe = inv.pe(node)
             fe.update(node=node, vendor=rpe["vendor"], name=rpe["name"], peKey=rpe.get("key"))
             m = match_remote(ep, pw, local_pe, rpe)
-            if not m:
+            if not m and _apply_trace(leg, trace, add):
+                pass  # the live trace found it (it also matches by VPN-ID and bridge-domain name)
+            elif not m:
                 fe["status"] = "no-service"
                 add("warning", f"{rpe['name']} ({node}) has no service matching {pw['id']}"
                                + (f" or VPLS-ID {ep['vplsId']}" if ep.get("vplsId") else "") + ".")
@@ -235,7 +274,7 @@ def stitch_endpoint(ep, local_pe, inv):
             unique.append(i)
     issues = sorted(unique, key=lambda i: SEV[i["sev"]])
     rec = dict(ep)
-    rec.update({"legs": legs, "status": status, "issues": issues,
+    rec.update({"legs": legs, "status": status, "issues": issues, "tracedAt": (trace or {}).get("tracedAt"),
                 "ces": sorted({a["ce"]["name"] for a in ep["acs"] if a.get("ce") and a["ce"].get("name")})})
     rec.pop("pws", None)
     return rec

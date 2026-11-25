@@ -145,13 +145,45 @@ class Handler(BaseHTTPRequestHandler):
             return
         try:
             collect = e2e_collect()
-            items = collect.collect_far_ends(node, collect.make_client(self.client.base),
-                                             collect.Inventory(nokia_dir=store.STORE))
+            items = collect.collect_far_ends(node, self._e2e_client(collect), collect.Inventory(nokia_dir=store.STORE))
             self._json(200, {"node": node, "results": items})
         except (OdlError, ValueError) as exc:
             self._json(502, {"error": str(exc)})
         except Exception as exc:  # report the problem to the page instead of dropping the connection
             self._json(500, {"error": f"far-end collection failed: {exc}"})
+
+    def _e2e_client(self, collect):
+        """An ODL client with RESTCONF GET as well (for Cisco far ends), same controller and credentials."""
+        c = collect.make_client(self.client.base)
+        c.user, c.password, c.cookie = self.client.user, self.client.password, self.client.cookie
+        return c
+
+    def _e2e_trace(self):
+        """Trace one service's far ends live (the dashboard's method) and return the refreshed service."""
+        try:
+            length = int(self.headers.get("Content-Length") or 0)
+            req = json.loads(self.rfile.read(length) or b"{}")
+            node = queries.validate_node(req.get("node"))
+            service = str(req.get("service") or "")
+            if not service:
+                raise ValueError("no service given")
+        except ValueError as exc:
+            self._json(400, {"error": str(exc)})
+            return
+        try:
+            collect = e2e_collect()
+            import e2e.sources
+            import e2e.trace
+            res = e2e.trace.trace_service(node, service, self._e2e_client(collect), e2e.sources.Inventory(nokia_dir=store.STORE))
+            payload = e2e.trace.traced_service_payload(node, service, e2e.sources.Inventory(nokia_dir=store.STORE))
+            payload["trace"] = res
+            self._json(200, payload)
+        except ValueError as exc:
+            self._json(400, {"error": str(exc)})
+        except OdlError as exc:
+            self._json(502, {"error": str(exc)})
+        except Exception as exc:
+            self._json(500, {"error": f"trace failed: {exc}"})
 
     def do_POST(self):
         if urlparse(self.path).path == "/api/run-all":
@@ -164,6 +196,9 @@ class Handler(BaseHTTPRequestHandler):
                 self._json(400, {"error": str(exc)})
                 return
             self._build_report(node)
+            return
+        if urlparse(self.path).path == "/api/e2e-trace":
+            self._e2e_trace()
             return
         if urlparse(self.path).path == "/api/e2e-collect":
             self._e2e_collect()
