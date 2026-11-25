@@ -15,6 +15,8 @@ Namespaces:
   guesses; verify them against the device before relying on them.
 """
 
+import time
+
 OC = {
     "interfaces": "http://openconfig.net/yang/interfaces",
     "platform": "http://openconfig.net/yang/platform",
@@ -130,7 +132,9 @@ DATA_PATHS = {
     "cisco-bgp-neighbors": "Cisco-IOS-XR-ipv4-bgp-oper:bgp/instances/instance=default/instance-active/default-vrf/neighbors?content=nonconfig",
     "cisco-ldp": "Cisco-IOS-XR-mpls-ldp-oper:mpls-ldp",
     "cisco-bfd": "Cisco-IOS-XR-ip-bfd-oper:bfd",
-    "cisco-l2vpn": at_locations("Cisco-IOS-XR-l2vpn-oper:l2vpn-forwarding/nodes/node={loc}?content=nonconfig"),
+    # Only the L2FIB summary: the whole node (every MAC, cross-connect and counter) times out in ODL on large
+    # routers. Cross-connects and bridge ports come from e2e-l2fibx-cons and e2e-bridge-ports.
+    "cisco-l2vpn": at_locations("Cisco-IOS-XR-l2vpn-oper:l2vpn-forwarding/nodes/node={loc}/l2fib-summary?content=nonconfig"),
     "cisco-sr-config": "Cisco-IOS-XR-um-segment-routing-cfg:segment-routing",
 
     # ---- Batch 2: device health, control plane, services (candidates, verified by the run)
@@ -197,9 +201,24 @@ DISABLED = [
     # xconnect and bridge paths: operational l2vpn container not on this release (use cisco-l2vpn, which
     # returns the xconnect and bridge summaries via l2vpn-forwarding); xconnect config path schema not found.
     "cisco-l2vpn-xconnect", "cisco-l2vpn-bridges", "cisco-l2vpn-xconnect-config", "cisco-l2vpn-bridge-config",
+    # The whole l2vpn/database is very large on routers with hundreds of bridge domains and can time out
+    # in ODL; e2e-xconnect-config and e2e-bridge-config read the same data in two smaller parts.
+    # Run it on its own when wanted:  run_queries.py --node X --query cisco-l2vpn-config
+    "cisco-l2vpn-config",
 ]
 for _qid in DISABLED:
     QUERIES.pop(_qid, None)
+
+# Run order: the service and end-to-end reads first, the largest answers last. A query that times out
+# makes ODL reopen the router's session, so the heavy ones should not stand in front of the L2VPN data.
+FIRST = ["e2e-xconnect-config", "e2e-bridge-config", "e2e-xconnect-oper", "e2e-bridge-oper", "e2e-bridge-ports",
+         "e2e-l2fibx-cons", "e2e-interface-config", "cisco-lldp-native", "cisco-interfaces-xr", "e2e-ldp-neighbors",
+         "e2e-ldp-bindings", "e2e-mpls-forwarding", "e2e-mpls-lsd-labels", "cisco-l2vpn"]
+LAST = ["cisco-platform-inventory", "cisco-ethernet-stats", "cisco-bgp-neighbors", "cisco-alarms",
+        "cisco-rib-ipv4", "cisco-cpu"]
+_order = [q for q in FIRST if q in QUERIES] + [q for q in QUERIES if q not in FIRST and q not in LAST] + \
+         [q for q in LAST if q in QUERIES]
+QUERIES = {q: QUERIES[q] for q in _order}
 
 # A RESTCONF answer that the path exists in the model but holds nothing on this router
 # (for example no xconnects on a VPLS-only router, or a node location the router does not have).
@@ -211,21 +230,80 @@ def paths_for(qid):
     return list(p) if isinstance(p, (list, tuple)) else [p]
 
 
+MOUNT_MARKERS = ("Mount point does not exist", "is not mounted on ODL")
+# ODL's NETCONF request timeout: the router took too long (usually a very large answer). ODL then
+# drops and reopens the NETCONF session, so the mount is missing for a short while afterwards.
+TIMEOUT_MARKERS = ("Task was cancelled", "Transaction(GET) failed", "TimeoutException", "timed out")
+RECONNECT_WAIT_S = 120
+SLEEP = time.sleep  # replaced in tests
+
+
+def wait_connected(client, node, max_wait=None):
+    """Wait while ODL reconnects the router after a dropped session. True once it is connected again.
+
+    Returns False at once when the controller does not list the node at all (wrong controller), or
+    when the client cannot check (the Nokia copy has no is_mounted)."""
+    if not hasattr(client, "is_mounted"):
+        return False
+    max_wait = RECONNECT_WAIT_S if max_wait is None else max_wait
+    waited, step = 0, 5
+    while True:
+        try:
+            listed, status = client.is_mounted(node)
+        except Exception:
+            listed, status = True, ""  # ODL busy: keep waiting
+        if not listed and waited == 0:
+            return False
+        if listed and status == "connected":
+            return True
+        if waited >= max_wait:
+            return False
+        SLEEP(step)
+        waited += step
+
+
 def fetch(client, node, qid):
     """Read one DATA_PATHS query, trying its alternative paths in order.
 
     Returns (data, path used, note). The first path that answers with data wins. A "data missing"
     answer moves on to the next path; if every path is missing, the result is empty (nothing is
     configured there), not an error. Any other failure on every path raises the first error, with
-    the paths tried. Works with both copies of odl_client (they raise their own OdlError)."""
+    the paths tried. Works with both copies of odl_client (they raise their own OdlError).
+
+    Two ODL answers stop the alternatives instead:
+      * a timeout ("Transaction(GET) failed / Task was cancelled"): the other locations would hit the
+        session ODL is reopening. Wait for the router to reconnect, then raise a clear error.
+      * "Mount point does not exist": if ODL is reconnecting the router, wait and retry once;
+        if the controller does not have the router at all, raise at once."""
     tried, first_err, empty_path = [], None, None
     for path in paths_for(qid):
         try:
             data = client.data_get(node, path)
         except Exception as exc:  # OdlError: keep trying the other paths
             msg = str(exc)
-            if "Mount point does not exist" in msg or "is not mounted on ODL" in msg:
-                raise  # the router is not on this controller: every other path fails the same way
+            if any(m in msg for m in MOUNT_MARKERS):
+                if not wait_connected(client, node):
+                    raise  # the router is not on this controller: every other path fails the same way
+                try:
+                    data = client.data_get(node, path)  # the session is back: one more try
+                except Exception as exc2:
+                    exc, msg = exc2, str(exc2)
+                else:
+                    exc = None
+                if exc is None:
+                    if data:
+                        return data, path, "retried after ODL reconnected the router"
+                    empty_path = empty_path or path
+                    continue
+            if any(t in msg for t in TIMEOUT_MARKERS):
+                back = wait_connected(client, node)
+                raise type(exc)(
+                    f"ODL timed out waiting for {node} on {path} (Transaction(GET) failed: Task was cancelled). "
+                    f"The answer is probably too large for ODL's NETCONF request timeout: read a smaller container, "
+                    f"or raise default-request-timeout-millis on this node's mount in ODL. "
+                    + ("ODL has reconnected the router, so the next queries can run."
+                       if back else "The router was not reconnected within the wait; later queries may fail too.")
+                    + f" | {msg[:600]}") from exc
             tried.append(f"{path}: {msg[:160]}")
             if any(x in msg for x in EMPTY_ERRORS):
                 empty_path = empty_path or path

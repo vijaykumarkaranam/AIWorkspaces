@@ -56,6 +56,22 @@ Postman or the E2E dashboard.
   Queries also stop at the first "not mounted" answer, so no error files are written for the other
   queries.
 
+## Timeouts ("Transaction(GET) failed / Task was cancelled")
+This is ODL's NETCONF request timeout: the router took too long to answer, usually because the
+answer is very large. ODL then drops and reopens the router's NETCONF session, so for a short
+while every query gets "Mount point does not exist".
+- **Smaller default reads:** `cisco-l2vpn` reads only the L2FIB summary. The whole
+  `l2vpn/database` read (`cisco-l2vpn-config`) is off by default: `e2e-xconnect-config` and
+  `e2e-bridge-config` read the same data in two smaller parts. Run it on its own with
+  `--query cisco-l2vpn-config` if needed.
+- **Recovery:** after a timeout, the query stops (the other location paths are not tried). The tool
+  waits up to 2 minutes for ODL to reconnect the router, then carries on with the next query. A
+  "Mount point does not exist" during such a reconnect is retried once, after the session is back.
+- **Run order:** the service queries run first and the largest health queries (CPU, RIB, alarms,
+  BGP, Ethernet stats, inventory) run last.
+- **Persistent timeouts:** if a query still times out, raise `default-request-timeout-millis` on that
+  router's NETCONF mount in ODL.
+
 ## Reading the results
 - An error like `unknown-element` or `unknown-namespace` means the model or path is not on the device.
   Keep the error and check the model in the capability list.

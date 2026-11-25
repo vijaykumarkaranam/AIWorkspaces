@@ -164,6 +164,72 @@ class NotMountedTest(unittest.TestCase):
         self.assertEqual(self.client().is_mounted("10.137.76.18"), (False, ""))
 
 
+TIMEOUT = ('Transaction(GET) failed Task was cancelled. | raw response: {"errors": {"error": [{"error-tag": '
+           '"operation-failed", "error-info": "Task was cancelled.", "error-message": "Transaction(GET) failed"}]}}')
+
+
+class ReconnectClient(FakeClient):
+    """A router whose session ODL drops after a timeout and reopens a few checks later."""
+
+    def __init__(self, answers, states):
+        super().__init__(answers)
+        self.states = list(states)  # what is_mounted reports, one entry per check
+
+    def is_mounted(self, node):
+        st = self.states.pop(0) if len(self.states) > 1 else self.states[0]
+        return (st is not None), (st or "")
+
+
+class TimeoutReconnectTest(unittest.TestCase):
+    def setUp(self):
+        self.slept = []
+        self._sleep = Q.SLEEP
+        Q.SLEEP = self.slept.append
+
+    def tearDown(self):
+        Q.SLEEP = self._sleep
+
+    def test_timeout_waits_for_reconnect_and_does_not_try_other_locations(self):
+        paths = Q.paths_for("cisco-l2vpn")
+        c = ReconnectClient({paths[0]: TIMEOUT}, ["connecting", "connecting", "connected"])
+        with self.assertRaises(OdlError) as ctx:
+            Q.fetch(c, "10.137.76.18", "cisco-l2vpn")
+        msg = str(ctx.exception)
+        self.assertIn("ODL timed out waiting for 10.137.76.18", msg)
+        self.assertIn("ODL has reconnected the router", msg)
+        self.assertEqual(c.calls, [paths[0]])      # 0/0/CPU0 and 0/RSP0/CPU0 were not tried
+        self.assertEqual(self.slept, [5, 5])       # waited two checks for the session to come back
+
+    def test_mount_missing_during_reconnect_is_retried(self):
+        path = Q.paths_for("e2e-bridge-config")[0]
+
+        class Flaky(ReconnectClient):
+            def data_get(self, node, p):
+                self.calls.append(p)
+                if len(self.calls) == 1:
+                    raise OdlError("node 10.137.76.18 is not mounted on ODL http://odl (Mount point does not exist)")
+                return {"bd": 1}
+
+        c = Flaky({}, ["connecting", "connected"])
+        data, used, note = Q.fetch(c, "10.137.76.18", "e2e-bridge-config")
+        self.assertEqual((data, used), ({"bd": 1}, path))
+        self.assertIn("retried", note)
+
+    def test_router_not_on_controller_fails_at_once(self):
+        c = ReconnectClient({p: "Mount point does not exist" for p in Q.paths_for("e2e-bridge-config")}, [None])
+        with self.assertRaises(OdlError):
+            Q.fetch(c, "10.137.76.18", "e2e-bridge-config")
+        self.assertEqual(self.slept, [])           # no waiting when ODL does not list the node at all
+
+    def test_heavy_queries_run_last_and_service_queries_first(self):
+        order = list(Q.QUERIES)
+        self.assertEqual(order[0], "e2e-xconnect-config")
+        self.assertEqual(order[-1], "cisco-cpu")
+        self.assertLess(order.index("e2e-l2fibx-cons"), order.index("cisco-bgp-neighbors"))
+        self.assertNotIn("cisco-l2vpn-config", Q.QUERIES)       # whole database: only on request
+        self.assertTrue(all("l2fib-summary" in p for p in Q.paths_for("cisco-l2vpn")))
+
+
 class AdapterTest(unittest.TestCase):
     def test_bridge_domains_from_bridge_domain_groups_query(self):
         d = cisco_data(ac_state="im-state-up")
