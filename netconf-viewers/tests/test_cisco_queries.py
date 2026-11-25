@@ -230,6 +230,40 @@ class TimeoutReconnectTest(unittest.TestCase):
         self.assertTrue(all("l2fib-summary" in p for p in Q.paths_for("cisco-l2vpn")))
 
 
+class MergedListsTest(unittest.TestCase):
+    """Hundreds of bridge-domain groups give one table of bridge domains, with the group in an 'In' column."""
+
+    def setUp(self):
+        sys.path.insert(0, os.path.join(ROOT, "cisco_iosxr"))
+        self.bcr = load(os.path.join("cisco_iosxr", "build_cisco_report.py"), "bcr_test")
+        self.data = {"Cisco-IOS-XR-l2vpn-cfg:bridge-domain-groups": {"bridge-domain-group": [
+            {"name": f"G{i}", "bridge-domains": {"bridge-domain": [{"name": f"BD{i}-{j}", "bridge-domain-mtu": 9100}
+                                                                   for j in range(2)]}} for i in range(300)]}}
+
+    def test_one_table_per_path(self):
+        merged = {p: (items, owners) for p, items, owners in self.bcr.merged_lists(self.data)}
+        items, owners = merged[("bridge-domain-groups", "bridge-domain-group", "bridge-domains", "bridge-domain")]
+        self.assertEqual(len(items), 600)
+        self.assertEqual(owners[0], "G0")
+        lists = [t for t in self.bcr.build_tables(self.data) if t["kind"] == "list"]
+        self.assertEqual(len(lists), 2)                         # groups, and all bridge domains
+        bd = next(t for t in lists if t["count"] == 600)
+        self.assertEqual(bd["columns"][0], "In")
+        self.assertEqual(bd["rows"][599]["c"][:2], ["G299", "BD299-1"])
+
+    def test_console_summary_is_short_and_named(self):
+        import contextlib
+        import io
+        rq = load(os.path.join("cisco_iosxr", "run_queries.py"), "rq_test")
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            rq.print_summary(self.data)
+        lines = buf.getvalue().strip().splitlines()
+        self.assertEqual(len(lines), 2)
+        self.assertIn("bridge-domain-group: 300  e.g. G0, G1", lines[0])
+        self.assertIn("bridge-domain: 600  e.g. BD0-0", lines[1])
+
+
 class AdapterTest(unittest.TestCase):
     def test_bridge_domains_from_bridge_domain_groups_query(self):
         d = cisco_data(ac_state="im-state-up")

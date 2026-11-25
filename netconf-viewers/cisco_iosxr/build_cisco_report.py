@@ -184,19 +184,51 @@ def summary_blocks(obj, out=None):
     return out
 
 
-def all_lists(obj, path=(), out=None):
-    """Every list of records in the response, with the key path that leads to it."""
+# Fields that name a record, most specific first: used for the "In" column and console examples.
+NAME_KEYS = ("xconnect-name", "bridge-domain-name", "bd-name", "name", "interface-name", "group-name",
+             "neighbor-id", "neighbor-address", "lsr-id", "device-id", "address", "prefix", "vrf-name",
+             "instance-name", "component-name", "node-name", "route-table-name", "id")
+
+
+def record_name(x):
+    """A short name for a record, from its first naming field, or ''."""
+    if isinstance(x, dict):
+        for k in NAME_KEYS:
+            v = x.get(k)
+            if v not in (None, "") and is_scalar(v):
+                return str(v)
+    return ""
+
+
+def all_lists(obj, path=(), out=None, owner=""):
+    """Every list of records in the response: (key path, records, owner), where owner names the
+    records it sits in, e.g. 'ACTIVATION / ACTIVATION_LOW_TRUST' for a bridge domain's VFIs."""
     if out is None:
         out = []
     if isinstance(obj, list):
         if obj and all(isinstance(x, dict) for x in obj):
-            out.append((path, obj))
-        for x in obj:
-            all_lists(x, path, out)
+            out.append((path, obj, owner))
+            for x in obj:
+                nm = record_name(x)
+                all_lists(x, path, out, f"{owner} / {nm}" if owner and nm else (nm or owner))
+        else:
+            for x in obj:
+                all_lists(x, path, out, owner)
     elif isinstance(obj, dict):
         for k, v in obj.items():
-            all_lists(v, path + (k.split(":")[-1],), out)
+            all_lists(v, path + (k.split(":")[-1],), out, owner)
     return out
+
+
+def merged_lists(obj):
+    """all_lists with every list at the same key path joined into one: [(path, records, owners)].
+    A router with 600 bridge-domain groups gives one list of all its bridge domains, not 600 lists."""
+    merged = {}
+    for path, items, owner in all_lists(obj):
+        m = merged.setdefault(path, ([], []))
+        m[0].extend(items)
+        m[1].extend([owner] * len(items))
+    return [(p, items, owners) for p, (items, owners) in merged.items()]
 
 
 def table_dict(title, kind, columns, rows, count=None):
@@ -218,13 +250,15 @@ def build_tables(data):
         title = name if n == 1 else f"{name} ({n})"
         tables.append(table_dict(title, "summary", ["Field", "Value"],
                                  [{"c": [k, v], "raw": v} for k, v in scalars(sub)[:MAX_ROWS]]))
-    lists = sorted(all_lists(data), key=lambda p: -len(p[1]))
-    for path, items in lists[:20]:
+    # One table per key path (same lists merged), outer lists first, then the largest.
+    lists = sorted(merged_lists(data), key=lambda p: (len(p[0]), -len(p[1])))
+    for path, items, owners in sorted(lists, key=lambda p: -len(p[1]))[:20]:
         cols = scalar_columns(items)
-        rows = [{"c": [x.get(c) if is_scalar(x.get(c)) else None for c in cols], "raw": x}
-                for x in items[:MAX_ROWS]]
+        with_owner = len(set(owners)) > 1
+        rows = [{"c": ([o] if with_owner else []) + [x.get(c) if is_scalar(x.get(c)) else None for c in cols], "raw": x}
+                for x, o in zip(items[:MAX_ROWS], owners[:MAX_ROWS])]
         title = " / ".join(path[-3:]) if path else "Records"
-        tables.append(table_dict(title, "list", cols, rows, len(items)))
+        tables.append(table_dict(title, "list", (["In"] if with_owner else []) + cols, rows, len(items)))
     return tables
 
 

@@ -71,6 +71,12 @@ while every query gets "Mount point does not exist".
   BGP, Ethernet stats, inventory) run last.
 - **Persistent timeouts:** if a query still times out, raise `default-request-timeout-millis` on that
   router's NETCONF mount in ODL.
+- **Slow queries in the viewer:** the status line counts the seconds a query has been running. A
+  slow query (for example `e2e-bridge-oper` on a router with about a thousand bridge domains) can take
+  a few minutes before it times out and the run moves on. **Stop after this query** ends the run
+  after the current query, and the report is still built from what was saved.
+- **Client wait:** the tool waits up to 180 s for one ODL answer. Set `ODL_TIMEOUT` (seconds) to change
+  this.
 
 ## Reading the results
 - An error like `unknown-element` or `unknown-namespace` means the model or path is not on the device.

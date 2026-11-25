@@ -20,12 +20,9 @@ sys.path.insert(0, HERE)
 
 from odl_client import NotMountedError, OdlClient, OdlError, TOPOLOGY  # noqa: E402
 import queries  # noqa: E402
+import build_cisco_report as bcr  # noqa: E402
 
 RESULTS = os.path.join(HERE, "results")
-NAME_KEYS = ("name", "interface-name", "neighbor-id", "neighbor-address", "address", "vrf-name",
-             "instance-name", "component-name", "id")
-
-
 def stamp():
     return dt.datetime.now().strftime("%Y%m%d-%H%M%S")
 
@@ -43,46 +40,19 @@ def save(node, name, payload):
     return path
 
 
-def walk_lists(obj, path="", out=None):
-    """Every list of records in a response: (path, rows)."""
-    if out is None:
-        out = []
-    if isinstance(obj, list):
-        if obj and all(isinstance(x, dict) for x in obj):
-            out.append((path or "(root)", obj))
-        for i, x in enumerate(obj):
-            walk_lists(x, path, out)
-    elif isinstance(obj, dict):
-        for k, v in obj.items():
-            walk_lists(v, f"{path}/{k}" if path else k, out)
-    return out
-
-
-def sample_names(rows, limit=6):
-    names = []
-    for r in rows:
-        for k in NAME_KEYS:
-            if k in r and not isinstance(r[k], (dict, list)):
-                names.append(str(r[k]))
-                break
-        if len(names) >= limit:
-            break
-    return names
-
-
-def print_summary(data):
-    """What is in the response: each list with its count and a few names."""
-    lists = walk_lists(data)
-    lists = [(p, rows) for p, rows in lists if len(rows) >= 1]
+def print_summary(data, limit=12):
+    """What is in the response: one line per list (same lists merged), with the total and a few names."""
+    lists = [(p, items) for p, items, _owners in bcr.merged_lists(data)]
     if not lists:
         print("    no list data (the response may be a single object or empty)")
         return
-    for path, rows in lists[:25]:
-        names = sample_names(rows)
-        more = f" ... (+{len(rows) - len(names)})" if len(rows) > len(names) else ""
-        print(f"    {path}: {len(rows)} item(s)  e.g. {', '.join(names)}{more}")
-    if len(lists) > 25:
-        print(f"    ... {len(lists) - 25} more lists in the saved file")
+    lists.sort(key=lambda p: (len(p[0]), -len(p[1])))  # outer lists first: they say what the answer holds
+    for path, items in lists[:limit]:
+        names = [n for n in (bcr.record_name(x) for x in items[:200]) if n][:5]
+        eg = f"  e.g. {', '.join(names)}" + (" ..." if len(items) > len(names) else "") if names else ""
+        print(f"    {' / '.join(path[-3:]) or '(root)'}: {len(items):,}{eg}")
+    if len(lists) > limit:
+        print(f"    ... {len(lists) - limit} more lists in the saved file")
 
 
 def run_query(client, node, qid):

@@ -35,7 +35,7 @@ class OdlClient:
         self.user = os.environ.get("ODL_USER", "") if user is None else user
         self.password = os.environ.get("ODL_PASSWORD", "") if password is None else password
         self.cookie = os.environ.get("ODL_COOKIE", "") if cookie is None else cookie
-        self.timeout = timeout
+        self.timeout = int(os.environ.get("ODL_TIMEOUT") or timeout)  # seconds to wait for one ODL answer
 
     def _request(self, method, path, body=None, content_type=None):
         headers = {"Accept": "application/json"}

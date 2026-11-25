@@ -211,10 +211,11 @@ for _qid in DISABLED:
 
 # Run order: the service and end-to-end reads first, the largest answers last. A query that times out
 # makes ODL reopen the router's session, so the heavy ones should not stand in front of the L2VPN data.
-FIRST = ["e2e-xconnect-config", "e2e-bridge-config", "e2e-xconnect-oper", "e2e-bridge-oper", "e2e-bridge-ports",
+FIRST = ["e2e-xconnect-config", "e2e-bridge-config", "e2e-xconnect-oper", "e2e-bridge-ports",
          "e2e-l2fibx-cons", "e2e-interface-config", "cisco-lldp-native", "cisco-interfaces-xr", "e2e-ldp-neighbors",
          "e2e-ldp-bindings", "e2e-mpls-forwarding", "e2e-mpls-lsd-labels", "cisco-l2vpn"]
-LAST = ["cisco-platform-inventory", "cisco-ethernet-stats", "cisco-bgp-neighbors", "cisco-alarms",
+# e2e-bridge-oper is slow on routers with many bridge domains; the PWs come from e2e-bridge-ports anyway.
+LAST = ["e2e-bridge-oper", "cisco-platform-inventory", "cisco-ethernet-stats", "cisco-bgp-neighbors", "cisco-alarms",
         "cisco-rib-ipv4", "cisco-cpu"]
 _order = [q for q in FIRST if q in QUERIES] + [q for q in QUERIES if q not in FIRST and q not in LAST] + \
          [q for q in LAST if q in QUERIES]

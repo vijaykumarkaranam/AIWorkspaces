@@ -109,6 +109,7 @@ PAGE = r"""<!doctype html>
   <button id="build">Build report</button>
   <button id="collectFar" title="Fetch the far-end PEs (Cisco or Nokia) of this router's services, then rebuild the report">Collect far ends</button>
   <button id="clear">Clear tabs</button>
+  <button id="stop" disabled title="Let the query that is running finish, then stop the run">Stop after this query</button>
 </div>
 <div id="status">Pick a router, then press Run all queries. Each query opens as a tab with its tables when it finishes.</div>
 <div class="tabs" id="tabs"></div>
@@ -125,7 +126,7 @@ let active = -1;        // index into tabs
 let reportReady = false, showReport = false;
 
 function say(t){ $("status").textContent = t; }
-function setBusy(b){ document.querySelectorAll("button,select").forEach(x => x.disabled = b); }
+function setBusy(b){ document.querySelectorAll("button,select").forEach(x => { if (x.id !== "stop") x.disabled = b; }); $("stop").disabled = !b; }
 
 async function post(url, body){
   const r = await fetch(url, {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(body || {})});
@@ -200,18 +201,32 @@ function render(){
   $("view").innerHTML = view;
 }
 
+let STOP = false;
 async function runRouter(node){
   for (let i = 0; i < queries.length; i++) {
     const q = queries[i];
-    say(`${node}: query ${i + 1} of ${queries.length} · ${q.label}`);
-    const r = await post("/api/run-query", {node, query: q.id});
+    const label = `${node}: query ${i + 1} of ${queries.length} · ${q.label}`;
+    const t0 = Date.now();
+    say(label);
+    // A large answer can take minutes (the router is slow to build it, or ODL times out and reconnects).
+    const tick = setInterval(() => {
+      const s = Math.round((Date.now() - t0) / 1000);
+      say(`${label} · running ${s} s` + (s > 30 ? " (still waiting for the router through ODL; a timeout or reconnect can take a few minutes, then the run continues)" : "") +
+          (STOP ? " · will stop after this query" : ""));
+    }, 1000);
+    let r;
+    try { r = await post("/api/run-query", {node, query: q.id}); }
+    finally { clearInterval(tick); }
     tabs.push({node, id: q.id, label: q.label, ok: r.ok, tables: r.tables || [], ti: 0,
-               data: r.data, error: r.error, mode: "table", q: ""});
+               data: r.data, error: r.error, mode: "table", q: "", secs: Math.round((Date.now() - t0) / 1000)});
     active = tabs.length - 1;
     showReport = false;
     render();
+    if (STOP) return false;
   }
+  return true;
 }
+$("stop").onclick = () => { STOP = true; $("stop").disabled = true; say("Stopping after the query that is running..."); };
 
 async function buildReport(){
   say("Building report from the saved results...");
@@ -225,6 +240,7 @@ async function buildReport(){
 function reset(){ tabs = []; active = -1; reportReady = false; showReport = false; render(); }
 
 async function guard(fn){
+  STOP = false;
   setBusy(true);
   try { await fn(); }
   catch (e) { say("Error: " + e.message); }
@@ -233,13 +249,13 @@ async function guard(fn){
 
 $("runOne").onclick = () => guard(async () => {
   reset();
-  await runRouter($("dev").value);
+  const finished = await runRouter($("dev").value);
   await buildReport();
-  say(`${$("dev").value} done. ${tabs.filter(t => t.ok).length} queries with data, ${tabs.filter(t => !t.ok).length} without. Report is in the Device report tab.`);
+  say(`${$("dev").value} ${finished ? "done" : "stopped"}. ${tabs.filter(t => t.ok).length} queries with data, ${tabs.filter(t => !t.ok).length} without. Report is in the Device report tab.`);
 });
 $("runEvery").onclick = () => guard(async () => {
   reset();
-  for (const n of routers) await runRouter(n);  // the ROUTERS list only, not every node in ODL
+  for (const n of routers) { if (!(await runRouter(n))) break; }  // the ROUTERS list only, not every node in ODL
   await buildReport();
   say("All routers done. Report is in the Device report tab.");
 });
