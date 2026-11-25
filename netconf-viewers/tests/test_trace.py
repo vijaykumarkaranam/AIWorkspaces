@@ -221,8 +221,9 @@ class BgpAdTraceTest(unittest.TestCase):
     def test_peers_from_the_bridge_domain_oper_read(self):
         self.start(oper_works=True)
         res = trace_service(CISCO, "bridge-domain:BG/BD200", self.client, self.inv(), log=lambda *_: None)
-        self.assertEqual(res["localPeersFrom"], "bridge-domain oper state")
-        self.assertEqual(sorted(p["peer"] for p in res["localPeers"]), sorted([NOKIA, CISCO2]))
+        self.assertEqual(res["localPeersFrom"], "bridge-domain oper (2) + T-LDP AToM neighbours (1 more)")
+        self.assertEqual(sorted(p["peer"] for p in res["localPeers"] if not p["candidate"]), sorted([NOKIA, CISCO2]))
+        self.assertIn("bridge-domain", res["localOper"])  # the raw answer is kept for troubleshooting
         s = self.svc()
         legs = {l["farEnd"]["ip"]: l for l in s["legs"]}
         self.assertEqual(set(legs), {NOKIA, CISCO2})
@@ -237,8 +238,31 @@ class BgpAdTraceTest(unittest.TestCase):
     def test_candidates_from_tldp_when_the_oper_read_fails(self):
         self.start(oper_works=False)
         res = trace_service(CISCO, "bridge-domain:BG/BD200", self.client, self.inv(), log=lambda *_: None)
-        self.assertTrue(res["candidates"])
+        self.assertTrue(all(p["candidate"] for p in res["localPeers"]))
         self.assertEqual(res["peers"]["5.5.5.5"]["status"], "unreachable")  # not mounted: cannot confirm
         s = self.svc()
-        # Only candidates that really carry VPN-ID 200 become peer rows.
+        # Only candidates that really carry VPN-ID 200 become peer rows; the others are listed apart.
         self.assertEqual(sorted(l["farEnd"]["ip"] for l in s["legs"]), sorted([NOKIA, CISCO2]))
+        self.assertEqual([o["ip"] for o in s["traceOthers"]], ["5.5.5.5"])
+
+    def test_screenshot_case_oper_lists_one_connecting_peer(self):
+        """10.137.76.18 / 51726: the oper read named one peer (connecting), the members came from T-LDP AToM."""
+        one = {"Cisco-IOS-XR-l2vpn-oper:bridge-domain": [{"bridge-domain-name": "BD200", "bridge-vfis": {"bridge-vfi": [
+            {"bridge-pws": {"bridge-pw": [{"neighbor": GONE, "pw-id": 1}]}}]}}]}
+        handler = type("H", (BgpAdNoSavedPeers,), {"oper_works": True})
+        orig = handler.do_GET
+
+        def do_GET(h):
+            if f"node={CISCO}/" in h.path and "bridge-domain=BG,BD200" in h.path:
+                return h._send(200, one)
+            return orig(h)
+        handler.do_GET = do_GET
+        self.srv = ThreadingHTTPServer(("127.0.0.1", 0), handler)
+        threading.Thread(target=self.srv.serve_forever, daemon=True).start()
+        self.client = make_client(f"http://127.0.0.1:{self.srv.server_address[1]}")
+        self.client.user = ""
+        trace_service(CISCO, "bridge-domain:BG/BD200", self.client, self.inv(), log=lambda *_: None)
+        s = self.svc()
+        legs = {l["farEnd"]["ip"]: l["farEnd"]["status"] for l in s["legs"]}
+        self.assertEqual(legs, {GONE: "unreachable", NOKIA: "matched", CISCO2: "matched"})  # as the dashboard finds them
+        self.assertEqual([o["ip"] for o in s["traceOthers"]], ["5.5.5.5"])

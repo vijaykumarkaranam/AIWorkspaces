@@ -213,27 +213,31 @@ def get_label(d, field):
 
 
 def local_vpls_peers(client, node, ep, pe, log=print):
-    """(peers, source) for a Cisco bridge domain whose peers are not in the saved data.
-
-    1. this bridge domain's own oper state (one keyed read, l2vpnv2/active/bridge-domains/bridge-domain=G,N);
-    2. else, as the dashboard does, the T-LDP neighbours whose client is AToM (candidates: the far-end
-       trace then shows which of them carry this VPLS)."""
+    """(peers, source summary, raw oper answer) for a Cisco BGP-AD bridge domain, as the dashboard builds
+    them: the union of this bridge domain's oper peers (one keyed read of
+    l2vpnv2/active/bridge-domains/bridge-domain=G,N) and the T-LDP neighbours whose client is AToM.
+    Peers only from T-LDP are candidates: the far-end trace shows whether they carry this VPLS."""
     if pe.get("vendor") != "cisco" or ep.get("type") != "bridge-domain" or not ep.get("group"):
-        return [], ""
+        return [], "", None
+    mine = set(pe.get("loopbacks") or [])
     path = ("Cisco-IOS-XR-l2vpn-oper:l2vpnv2/active/bridge-domains/bridge-domain="
             f"{quote(str(ep['group']), safe='')},{quote(str(ep['name']), safe='')}?content=nonconfig")
+    raw = None
     try:
-        found = bd_oper_peers(client.data_get(node, path))
-    except Exception as exc:  # older releases have no keyed read: fall back below
+        raw = client.data_get(node, path)
+        oper = [p for p in bd_oper_peers(raw) if p["peer"] not in mine]
+    except Exception as exc:  # older releases have no keyed read: the T-LDP candidates still work
         log(f"  bridge-domain oper read failed: {str(exc)[:160]}")
-        found = []
-    mine = set(pe.get("loopbacks") or [])
-    found = [p for p in found if p["peer"] not in mine]
-    if found:
-        return found, "bridge-domain oper state"
-    cands = [{"peer": ip, "pwId": "", "state": "", "localLabel": None, "remoteLabel": None}
-             for ip, n in sorted((pe.get("_ldp") or {}).items()) if "AToM" in (n.get("clients") or []) and ip not in mine]
-    return cands, "T-LDP neighbours with AToM (candidates)" if cands else ""
+        raw, oper = {"error": str(exc)[:500]}, []
+    peers = {p["peer"]: dict(p, candidate=False, src="bridge-domain oper") for p in oper}
+    ldp = [ip for ip, n in sorted((pe.get("_ldp") or {}).items()) if "AToM" in (n.get("clients") or []) and ip not in mine]
+    for ip in ldp:
+        if ip not in peers:
+            peers[ip] = {"peer": ip, "pwId": "", "state": "", "localLabel": None, "remoteLabel": None,
+                         "candidate": True, "src": "T-LDP AToM"}
+    summary = " + ".join(x for x in (f"bridge-domain oper ({len(oper)})" if oper else "",
+                                       f"T-LDP AToM neighbours ({len([i for i in ldp if peers[i]['candidate']])} more)" if ldp else "") if x)
+    return list(peers.values()), summary, raw
 
 
 # ---------------------------------------------------------------- the trace
@@ -253,16 +257,20 @@ def trace_service(node, service_key, client=None, inv=None, log=print, max_peers
     for pw in ep["pws"]:
         if pw.get("peer") and pw["peer"] not in peers and inv.resolve(pw["peer"]) != node:
             peers[pw["peer"]] = pw
-    local_peers, local_src = [], ""
+    local_peers, local_src, local_raw = [], "", None
     if ep.get("type") == "bridge-domain" and (not ep["pws"] or str(ep.get("signaling", "")).startswith("BGP-AD")):
-        local_peers, local_src = local_vpls_peers(client, node, ep, pe, log)
+        local_peers, local_src, local_raw = local_vpls_peers(client, node, ep, pe, log)
         log(f"  {len(local_peers)} peer(s) from {local_src or 'nowhere'}")
         for lp in local_peers:
-            peers.setdefault(lp["peer"], {"peer": lp["peer"], "vcId": lp["pwId"], "kind": "bgp-auto", "oper": lp["state"]})
-    ordered = sorted(peers, key=lambda ip: (topo.get(inv.odl_node_for(ip), {}).get("status") != "connected", ip))
+            peers.setdefault(lp["peer"], {"peer": lp["peer"], "vcId": lp["pwId"], "kind": "bgp-auto", "oper": lp["state"],
+                                          "candidate": lp.get("candidate")})
+    # Real peers first, then T-LDP candidates; connected routers first within each (as the dashboard does).
+    ordered = sorted(peers, key=lambda ip: (bool(peers[ip].get("candidate")),
+                                            topo.get(inv.odl_node_for(ip), {}).get("status") != "connected", ip))
     result = {"node": node, "service": service_key, "tracedAt": dt.datetime.now().isoformat(timespec="seconds"),
               "peers": {}, "skipped": max(0, len(ordered) - max_peers),
-              "localPeers": local_peers, "localPeersFrom": local_src, "candidates": "candidates" in local_src}
+              "localPeers": local_peers, "localPeersFrom": local_src,
+              "localOper": (json.dumps(local_raw, default=str)[:300000] if local_raw is not None else None)}
     for ip in ordered[:max_peers]:
         pw = peers[ip]
         odl_node = inv.odl_node_for(ip)

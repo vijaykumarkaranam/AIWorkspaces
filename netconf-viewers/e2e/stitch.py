@@ -35,16 +35,20 @@ def _traced_pws(ep, trace, local_pe):
     """Pseudowires a live trace found for this service that the saved data did not have (BGP-AD VPLS
     peers from the bridge domain's oper state, or T-LDP candidates that turned out to carry it)."""
     if not trace or not trace.get("localPeers"):
-        return []
+        return [], []
     known = {p.get("peer") for p in ep["pws"]}
-    out = []
+    out, others = [], []
     for lp in trace["localPeers"]:
         peer = lp.get("peer")
         t = (trace.get("peers") or {}).get(peer) or {}
         if not peer or peer in known:
             continue
-        if trace.get("candidates") and t.get("status") not in ("ce_found", "no_lldp"):
-            continue  # a T-LDP neighbour that does not carry this VPLS (or could not be checked)
+        if lp.get("candidate") and t.get("status") not in ("ce_found", "no_lldp"):
+            # A T-LDP (AToM) neighbour that does not carry this VPLS, or that could not be checked:
+            # listed apart, not as a peer of this service.
+            others.append({"ip": peer, "status": t.get("status") or "not traced", "error": t.get("error") or "",
+                           "vendor": t.get("vendor")})
+            continue
         fn = local_pe.get("_transport_to")
         tr = dict(fn(peer)) if fn else {"type": "", "name": f"to {peer}", "paths": [], "hops": [], "issues": []}
         tr["description"] = f"peer from the live trace ({trace.get('localPeersFrom')})"
@@ -56,7 +60,7 @@ def _traced_pws(ep, trace, local_pe):
         if lp.get("localLabel") is not None or lp.get("remoteLabel") is not None:
             pw["pwLabels"] = {"local": lp.get("localLabel"), "remote": lp.get("remoteLabel")}
         out.append(pw)
-    return out
+    return out, others
 
 
 def _load_trace(node, service_key):
@@ -214,7 +218,8 @@ def stitch_endpoint(ep, local_pe, inv):
     trace = _load_trace(local_pe["node"], ep["key"])
     legs = []
     bgp_ad = str(ep.get("signaling") or "").startswith("BGP-AD")
-    for pw in list(ep["pws"]) + _traced_pws(ep, trace, local_pe):
+    extra, others = _traced_pws(ep, trace, local_pe)
+    for pw in list(ep["pws"]) + extra:
         leg = {"pw": pw, "farEnd": {"ip": pw.get("peer"), "node": None, "vendor": None, "name": None,
                                     "status": "no-address", "matchedBy": None},
                "remote": None, "remotePw": None}
@@ -310,6 +315,7 @@ def stitch_endpoint(ep, local_pe, inv):
     issues = sorted(unique, key=lambda i: SEV[i["sev"]])
     rec = dict(ep)
     rec.update({"legs": legs, "status": status, "issues": issues, "tracedAt": (trace or {}).get("tracedAt"),
+                "traceOthers": others, "tracePeersFrom": (trace or {}).get("localPeersFrom"),
                 "ces": sorted({a["ce"]["name"] for a in ep["acs"] if a.get("ce") and a["ce"].get("name")})})
     rec.pop("pws", None)
     return rec

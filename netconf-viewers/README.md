@@ -45,13 +45,17 @@ about this one service now, the way the dashboard does:
   (point to point). The service is matched by VC/PW id, VPLS-ID, VPN-ID or bridge-domain name.
 
 For a **BGP-AD VPLS** bridge domain, the peers are learned at run time and are often missing from the
-saved data. This happens when the large L2FIB read (`e2e-bridge-ports`) did not finish. The trace then
-gets them itself:
-- it reads this one bridge domain's oper state
-  (`l2vpnv2/active/bridge-domains/bridge-domain=<group>,<name>`): its VFI peers, pseudowires, state
-  and VC labels
-- if that read fails, it uses the T-LDP neighbours whose client is AToM as candidates (as the
-  dashboard does), and keeps only those that turn out to carry this VPLS
+saved data (the large L2FIB read `e2e-bridge-ports` may not have finished). The trace builds the peer
+list the way the dashboard does:
+- **Union of sources:** this bridge domain's own oper state (one keyed read,
+  `l2vpnv2/active/bridge-domains/bridge-domain=<group>,<name>`), plus the T-LDP neighbours whose
+  client is AToM. Real peers are traced first, and connected routers first.
+- **Peer rows:** each candidate is asked whether it has this VPN-ID. Those that carry the VPLS (CE
+  found, or no LLDP) and the real peers that are unreachable get rows.
+- **Other neighbours:** AToM neighbours without the service are listed under "other T-LDP neighbours
+  checked, not in this VPLS". The dashboard shows them as "Not Discovered".
+- **Raw answer kept:** the bridge-domain oper answer is saved in the trace file (`localOper`) for
+  troubleshooting.
 
 Until the bridge domain is traced, it shows "far end missing" with this explanation, not "local only".
 

@@ -201,9 +201,12 @@ const E2E = (() => {
             ${transportHTML(tr, "Outbound from this PE")}${walkHTML(l.walk)}${back}</details>
         </div>`;
     }).join("");
-    const src = (rec.legs.find(l => l.pw.fromTrace) || {pw: {}}).pw.fromTrace;
+    const src = rec.tracePeersFrom || (rec.legs.find(l => l.pw.fromTrace) || {pw: {}}).pw.fromTrace;
+    const others = rec.traceOthers || [];
+    const othersHTML = others.length ? `<details class="e2e-tr" style="margin-top:10px"><summary>${others.length} other T-LDP (AToM) neighbour(s) checked, not in this VPLS</summary>
+      <div class="small">${others.map(o => `<span class="chip">${esc(o.ip)}${o.vendor ? " · " + esc(o.vendor) : ""} · ${esc(o.status === "no-service" ? "no service with this VPN-ID" : o.status)}${o.error && o.status !== "no-service" ? " (" + esc(o.error.slice(0, 80)) + ")" : ""}</span>`).join(" ")}</div></details>` : "";
     return `<h4 style="margin:14px 0 8px">All ${rec.legs.length} ${rec.type === "bridge-domain" || rec.type === "vpls" ? "VPLS peer" : "pseudowire"} paths${rec.tracedAt ? ` <span class="muted small">· live trace ${esc(rec.tracedAt.replace("T", " "))}${src ? " · peers from " + esc(src) : ""}</span>` : ""}</h4>
-      <div class="e2e-prows">${rows}</div>`;
+      <div class="e2e-prows">${rows}</div>${othersHTML}`;
   }
 
   function accessListHTML(rec) {

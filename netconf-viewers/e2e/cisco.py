@@ -20,6 +20,7 @@ Pseudowire state: the xconnect oper state when it is saved (not on every release
 a PW whose next hop is valid is counted as up.
 """
 import ipaddress
+import re
 
 from .transport import cisco_port, fmt_uptime, key, link, num, obj, port_issue
 from .util import as_list, find_key, get, norm_state, port_of, walk_dicts
@@ -110,6 +111,23 @@ def lldp_neighbours(data):
                                    "mgmt": next((m for m in mgmt if m), ""), "scope": ""}
     name = get(data, "Cisco-IOS-XR-ethernet-lldp-oper:lldp", "global-lldp", "lldp-info", "system-name")
     return nbrs, name, addrs
+
+
+def match_ac_lldp(ac_name, lldp):
+    """The CE on an attachment circuit, as the dashboard's matchAcToLldp: the exact interface, its parent
+    port (HundredGigE0/0/1/1.3894 -> HundredGigE0/0/1/1), or the same slot/port numbers under another name."""
+    if not ac_name or not lldp:
+        return None
+    for k in (ac_name, port_of(ac_name)):
+        if k in lldp:
+            return dict(lldp[k])
+    m = re.search(r"(\d+/\d+/\d+/\d+)", port_of(ac_name))
+    if m:
+        for intf, nb in lldp.items():
+            m2 = re.search(r"(\d+/\d+/\d+/\d+)", intf)
+            if m2 and m2.group(1) == m.group(1):
+                return dict(nb)
+    return None
 
 
 def l2fib_pseudowires(*datasets):
@@ -287,7 +305,7 @@ def pe_from_saved(node, data):
         return {"id": name_, "port": port, "vlan": name_.split(".", 1)[1] if "." in name_ else "",
                 "oper": norm_state((ctx.ifx.get(name_) or {}).get("state")), "flags": "", "adminShutdown": False,
                 "portOper": norm_state((ctx.ifx.get(port) or {}).get("state")), "description": ctx.desc.get(name_, ""),
-                "interface": None, "ce": dict(ctx.lldp[port]) if port in ctx.lldp else None,
+                "interface": None, "ce": match_ac_lldp(name_, ctx.lldp),
                 "portKey": pinfo["key"] if pinfo else None, "portHealth": pinfo["health"] if pinfo else None,
                 "portWhy": pinfo["why"] if pinfo else [], "portIssue": port_issue(pinfo, "Access port") if pinfo else None}
 
