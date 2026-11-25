@@ -405,7 +405,7 @@ def pe_from_saved(node, data):
                                        "rows": [[link(i, ctx.port(i)["key"]), n["name"], n["port"], n["mgmt"]] for i, n in sorted(ctx.lldp.items())]}])
     return {"node": node, "vendor": "cisco", "name": ctx.name or node, "loopbacks": sorted(x for x in loopbacks if x),
             "endpoints": endpoints, "queries": sorted(q for q in QUERIES if data.get(q) is not None),
-            "objects": ctx.objects, "key": pe_key, "_transport_to": ctx.transport_to}
+            "objects": ctx.objects, "key": pe_key, "_transport_to": ctx.transport_to, "_ldp": ldp}
 
 
 def _endpoint(stype, key_, name, acs, pws, vid, vpn, evpn):

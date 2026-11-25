@@ -21,6 +21,7 @@ import datetime as dt
 
 from . import cisco, nokia
 from .sources import Inventory
+from .util import norm_state
 
 SEV = {"critical": 0, "warning": 1, "info": 2}
 FAULT_BITS = ("lac-ingress-fault", "lac-egress-fault", "psn-ingress-fault", "psn-egress-fault", "pw-not-forwarding")
@@ -28,6 +29,34 @@ FAULT_BITS = ("lac-ingress-fault", "lac-egress-fault", "psn-ingress-fault", "psn
 
 def _slim(ep):
     return {k: ep.get(k) for k in ("key", "type", "id", "name", "description", "oper", "vplsId", "acs", "objKey")}
+
+
+def _traced_pws(ep, trace, local_pe):
+    """Pseudowires a live trace found for this service that the saved data did not have (BGP-AD VPLS
+    peers from the bridge domain's oper state, or T-LDP candidates that turned out to carry it)."""
+    if not trace or not trace.get("localPeers"):
+        return []
+    known = {p.get("peer") for p in ep["pws"]}
+    out = []
+    for lp in trace["localPeers"]:
+        peer = lp.get("peer")
+        t = (trace.get("peers") or {}).get(peer) or {}
+        if not peer or peer in known:
+            continue
+        if trace.get("candidates") and t.get("status") not in ("ce_found", "no_lldp"):
+            continue  # a T-LDP neighbour that does not carry this VPLS (or could not be checked)
+        fn = local_pe.get("_transport_to")
+        tr = dict(fn(peer)) if fn else {"type": "", "name": f"to {peer}", "paths": [], "hops": [], "issues": []}
+        tr["description"] = f"peer from the live trace ({trace.get('localPeersFrom')})"
+        pw = {"id": f"{peer}:{lp.get('pwId') or 'auto'}", "kind": "bgp-auto", "vcId": str(lp.get("pwId") or ""),
+              "sdpId": None, "peer": peer, "oper": norm_state(lp.get("state")) if lp.get("state") else
+              ("up" if t.get("status") in ("ce_found", "no_lldp") else "unknown"),
+              "flags": "", "localStatus": "", "peerStatus": "", "transport": tr,
+              "tldp": (local_pe.get("_ldp") or {}).get(peer), "fromTrace": trace.get("localPeersFrom")}
+        if lp.get("localLabel") is not None or lp.get("remoteLabel") is not None:
+            pw["pwLabels"] = {"local": lp.get("localLabel"), "remote": lp.get("remoteLabel")}
+        out.append(pw)
+    return out
 
 
 def _load_trace(node, service_key):
@@ -184,7 +213,8 @@ def stitch_endpoint(ep, local_pe, inv):
 
     trace = _load_trace(local_pe["node"], ep["key"])
     legs = []
-    for pw in ep["pws"]:
+    bgp_ad = str(ep.get("signaling") or "").startswith("BGP-AD")
+    for pw in list(ep["pws"]) + _traced_pws(ep, trace, local_pe):
         leg = {"pw": pw, "farEnd": {"ip": pw.get("peer"), "node": None, "vendor": None, "name": None,
                                     "status": "no-address", "matchedBy": None},
                "remote": None, "remotePw": None}
@@ -241,6 +271,9 @@ def stitch_endpoint(ep, local_pe, inv):
                     add(i["sev"], f"Return path from {rpe['name']}: {i['msg']}")
         legs.append(leg)
 
+    if not legs and bgp_ad and ep["type"] in ("bridge-domain", "vpls"):
+        add("info", "BGP-AD VPLS: its peers are learned at run time and are not in the saved data. Press "
+                    "'Trace far ends live' to read this bridge domain's peers and follow each one to its CE.")
     not_collected = sorted({l["farEnd"]["ip"] for l in legs if l["farEnd"]["status"] == "not-collected"})
     if not_collected:
         shown = ", ".join(not_collected[:5]) + (f" and {len(not_collected) - 5} more" if len(not_collected) > 5 else "")
@@ -261,6 +294,8 @@ def stitch_endpoint(ep, local_pe, inv):
         status = "degraded"
     elif worst == 1:
         status = "degraded"
+    elif not legs and bgp_ad and ep["type"] in ("bridge-domain", "vpls"):
+        status = "partial"  # peers exist, but only a trace (or the L2FIB read) can list them
     elif not legs:
         status = "local"
     elif not_collected or any(l["farEnd"]["status"] != "matched" for l in legs if l["farEnd"]["status"] != "self"):

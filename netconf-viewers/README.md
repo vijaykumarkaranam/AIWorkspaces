@@ -44,6 +44,17 @@ about this one service now, the way the dashboard does:
 - **Cisco far end:** LLDP plus `l2vpn/database/bridge-domain-groups` (VPLS) or `xconnect-groups`
   (point to point). The service is matched by VC/PW id, VPLS-ID, VPN-ID or bridge-domain name.
 
+For a **BGP-AD VPLS** bridge domain, the peers are learned at run time and are often missing from the
+saved data. This happens when the large L2FIB read (`e2e-bridge-ports`) did not finish. The trace then
+gets them itself:
+- it reads this one bridge domain's oper state
+  (`l2vpnv2/active/bridge-domains/bridge-domain=<group>,<name>`): its VFI peers, pseudowires, state
+  and VC labels
+- if that read fails, it uses the T-LDP neighbours whose client is AToM as candidates (as the
+  dashboard does), and keeps only those that turn out to carry this VPLS
+
+Until the bridge domain is traced, it shows "far end missing" with this explanation, not "local only".
+
 The result is saved in `e2e_traces/<node>/<service>.json` and is used by every later report build.
 It is much lighter than **Collect far ends**, which fetches each far end's whole query set.
 

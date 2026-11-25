@@ -155,3 +155,90 @@ class TraceTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+BD_OPER = {"Cisco-IOS-XR-l2vpn-oper:bridge-domain": [{
+    "bridge-domain-group-name": "BG", "bridge-domain-name": "BD200",
+    "bridge-vfis": {"bridge-vfi": [{"vfi-name": "BD200", "bridge-pws": {"bridge-pw": [
+        {"neighbor": NOKIA, "pw-id": 4294967013, "pseudowire": {"state": "l2vpn-pw-state-up", "peer-id": {"ipv4": NOKIA},
+                                                                 "local-signalling": {"local-label": 24010},
+                                                                 "remote-signalling": {"remote-label": 524000}}},
+        {"neighbor": CISCO2, "pw-id": 200, "pseudowire": {"state": "l2vpn-pw-state-up"}}]}}]}}]}
+
+
+class BgpAdNoSavedPeers(Odl):
+    """The local router's own bridge-domain oper read; everything else as the base fake ODL."""
+    oper_works = True
+
+    def do_GET(self):
+        if f"node={CISCO}/" in self.path and "bridge-domain=BG,BD200" in self.path:
+            return self._send(200, BD_OPER) if self.oper_works else self._send(500, {"errors": {"error": [
+                {"error-tag": "operation-failed", "error-message": "schema not found"}]}})
+        return Odl.do_GET(self)
+
+
+class BgpAdTraceTest(unittest.TestCase):
+    """The screenshot case: a BGP-AD bridge domain whose peers are not in the saved data (no L2FIB read)."""
+
+    def start(self, oper_works):
+        handler = type("H", (BgpAdNoSavedPeers,), {"oper_works": oper_works})
+        self.srv = ThreadingHTTPServer(("127.0.0.1", 0), handler)
+        threading.Thread(target=self.srv.serve_forever, daemon=True).start()
+        self.client = make_client(f"http://127.0.0.1:{self.srv.server_address[1]}")
+        self.client.user = ""
+
+    def setUp(self):
+        self.srv = None
+        self.tmp = tempfile.TemporaryDirectory()
+        os.environ["E2E_TRACES"] = os.path.join(self.tmp.name, "traces")
+        data = cisco_data(ac_state="im-state-up")
+        data.pop("e2e-bridge-ports")  # the big L2FIB read did not finish: no peers saved
+        data["e2e-ldp-neighbors"] = {"Cisco-IOS-XR-mpls-ldp-oper:neighbors": {"neighbor": [
+            {"lsr-id": ip, "protocol-information": {"ta-state": "Oper", "ta-up-time-seconds": 86400},
+             "detailed-information": {"client": [{"name": "AToM"}]}} for ip in (NOKIA, CISCO2, "5.5.5.5")]}}
+        self.cisco_dir = os.path.join(self.tmp.name, "results")
+        write_store(self.cisco_dir, CISCO, data)
+
+    def tearDown(self):
+        if self.srv is not None:  # only a started server can be shut down (shutdown waits for its loop)
+            self.srv.shutdown()
+            self.srv.server_close()
+        os.environ.pop("E2E_TRACES", None)
+        self.tmp.cleanup()
+
+    def inv(self):
+        return Inventory(os.path.join(self.tmp.name, "store"), self.cisco_dir, loopback_map={})
+
+    def svc(self):
+        return next(s for s in build_report_model(CISCO, self.inv())["services"] if s["key"] == "bridge-domain:BG/BD200")
+
+    def test_untraced_bgp_ad_says_why_not_local_only(self):
+        s = self.svc()
+        self.assertEqual(s["legs"], [])
+        self.assertEqual(s["status"], "partial")
+        self.assertTrue(any("BGP-AD VPLS" in i["msg"] for i in s["issues"]))
+
+    def test_peers_from_the_bridge_domain_oper_read(self):
+        self.start(oper_works=True)
+        res = trace_service(CISCO, "bridge-domain:BG/BD200", self.client, self.inv(), log=lambda *_: None)
+        self.assertEqual(res["localPeersFrom"], "bridge-domain oper state")
+        self.assertEqual(sorted(p["peer"] for p in res["localPeers"]), sorted([NOKIA, CISCO2]))
+        s = self.svc()
+        legs = {l["farEnd"]["ip"]: l for l in s["legs"]}
+        self.assertEqual(set(legs), {NOKIA, CISCO2})
+        self.assertEqual(legs[NOKIA]["remote"]["acs"][0]["ce"]["name"], "CE-NOKIA-SITE")
+        self.assertEqual(legs[NOKIA]["pw"]["pwLabels"], {"local": 24010, "remote": 524000})
+        self.assertEqual(legs[NOKIA]["pw"]["oper"], "up")
+        self.assertEqual(legs[CISCO2]["remote"]["acs"][0]["ce"]["name"], "CE-CISCO-SITE")
+        # The fixture RIB has no route to 4.4.4.4: one site without transport makes the VPLS degraded.
+        self.assertEqual(s["status"], "degraded")
+        self.assertTrue(any("No route to far-end loopback 4.4.4.4" in i["msg"] for i in s["issues"]))
+
+    def test_candidates_from_tldp_when_the_oper_read_fails(self):
+        self.start(oper_works=False)
+        res = trace_service(CISCO, "bridge-domain:BG/BD200", self.client, self.inv(), log=lambda *_: None)
+        self.assertTrue(res["candidates"])
+        self.assertEqual(res["peers"]["5.5.5.5"]["status"], "unreachable")  # not mounted: cannot confirm
+        s = self.svc()
+        # Only candidates that really carry VPN-ID 200 become peer rows.
+        self.assertEqual(sorted(l["farEnd"]["ip"] for l in s["legs"]), sorted([NOKIA, CISCO2]))

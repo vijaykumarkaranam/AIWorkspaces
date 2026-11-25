@@ -173,7 +173,9 @@ const E2E = (() => {
   }
 
   function peerRowsHTML(rec, model) {
-    if (!rec.legs.length) return '<p class="muted">No pseudowires: this service does not leave the PE through a pseudowire.</p>';
+    if (!rec.legs.length) return /^BGP-AD/.test(rec.signaling || "")
+      ? '<p class="muted">BGP-AD VPLS: the peers are discovered at run time and are not in the saved data. Press <b>Trace far ends live</b> to read this bridge domain\'s peers and follow each one to its CE.</p>'
+      : '<p class="muted">No pseudowires: this service does not leave the PE through a pseudowire.</p>';
     const rows = rec.legs.map(l => {
       const fe = l.farEnd, t = l.pw.tldp, cs = ceStatus(l), ce = remoteCe(l), tr = l.pw.transport || {};
       const svcCell = rec.type === "bridge-domain" || rec.type === "vpls"
@@ -199,7 +201,8 @@ const E2E = (() => {
             ${transportHTML(tr, "Outbound from this PE")}${walkHTML(l.walk)}${back}</details>
         </div>`;
     }).join("");
-    return `<h4 style="margin:14px 0 8px">All ${rec.legs.length} ${rec.type === "bridge-domain" || rec.type === "vpls" ? "VPLS peer" : "pseudowire"} paths${rec.tracedAt ? ` <span class="muted small">· live trace ${esc(rec.tracedAt.replace("T", " "))}</span>` : ""}</h4>
+    const src = (rec.legs.find(l => l.pw.fromTrace) || {pw: {}}).pw.fromTrace;
+    return `<h4 style="margin:14px 0 8px">All ${rec.legs.length} ${rec.type === "bridge-domain" || rec.type === "vpls" ? "VPLS peer" : "pseudowire"} paths${rec.tracedAt ? ` <span class="muted small">· live trace ${esc(rec.tracedAt.replace("T", " "))}${src ? " · peers from " + esc(src) : ""}</span>` : ""}</h4>
       <div class="e2e-prows">${rows}</div>`;
   }
 
@@ -212,7 +215,8 @@ const E2E = (() => {
   function headerHTML(rec, model) {
     const remoteCes = rec.legs.filter(l => remoteCe(l)).length, localCes = (rec.ces || []).length;
     const vendor = VEND[model.vendor] || model.vendor || "";
-    const canTrace = /^https?:$/.test(location.protocol) && rec.legs.length;
+    const bgpAd = /^BGP-AD/.test(rec.signaling || "") && (rec.type === "bridge-domain" || rec.type === "vpls");
+    const canTrace = /^https?:$/.test(location.protocol) && (rec.legs.length || bgpAd);
     return `<div class="e2e-hdr"><div><div class="e2e-title">◆ ${esc(vendor)} E2E path · ${ol(rec.objKey, esc(rec.id))} ${pill(rec.status)}</div>
         <div class="muted">${esc(model.node)} → ${rec.legs.length} peer(s) | ${esc((SVC_HEAD[rec.type] || rec.type))}${rec.name && rec.name !== rec.id ? " · " + esc(rec.name) : ""}</div>
         <div class="e2e-badges"><span class="bd b-v">${esc(vendor)}</span><span class="bd b-t">${esc(SVC_HEAD[rec.type] || rec.type)}</span>
@@ -220,7 +224,7 @@ const E2E = (() => {
           <span class="bd b-c">${localCes} local / ${remoteCes} remote CE(s) found</span></div></div>
       <div class="e2e-traceb">${canTrace
         ? `<button class="btn primary" data-e2e-trace="${esc(rec.key)}" title="Ask each far-end PE about this service now (Nokia: service sap and LLDP; Cisco: LLDP and L2VPN config), as the E2E dashboard does">Trace far ends live</button><div class="small muted" data-e2e-tracemsg></div>`
-        : (rec.legs.length ? '<div class="small muted">Open this report from the viewer (Device report tab) to trace far ends live.</div>' : "")}</div></div>`;
+        : (rec.legs.length || bgpAd ? '<div class="small muted">Open this report from the viewer (Device report tab) to trace far ends live.</div>' : "")}</div></div>`;
   }
 
   function pathsHTML(rec, model) {

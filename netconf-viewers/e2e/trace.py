@@ -19,6 +19,7 @@ import datetime as dt
 import json
 import os
 import re
+from urllib.parse import quote
 
 from . import cisco
 from .collect import _modules, make_client, topology
@@ -167,6 +168,74 @@ def trace_cisco(client, odl_node, ep, pw, local_pe):
     return ("ce_found" if any(a.get("ce") for a in rep["acs"]) else "no_lldp"), rec, how, ""
 
 
+# ---------------------------------------------------------------- the local bridge domain's peers
+
+IPV4 = re.compile(r"^\d{1,3}(\.\d{1,3}){3}$")
+
+
+def _ip(v):
+    """An IPv4 address from a peer field that may be a string or a {ipv4 / ipv4-peer-id: ...} container."""
+    if isinstance(v, dict):
+        v = v.get("ipv4") or v.get("ipv4-peer-id") or v.get("ipv4-address") or v.get("neighbor")
+    return v if isinstance(v, str) and IPV4.match(v) and v != "0.0.0.0" else None
+
+
+def bd_oper_peers(data):
+    """Pseudowire peers in a bridge domain's oper detail (l2vpnv2 bridge-domain): VFI PWs, BGP-AD
+    discovered peers and access PWs, with PW id, state and VC labels where the router gives them."""
+    from .util import walk_dicts
+    peers = {}
+    for d in walk_dicts(data or {}):
+        peer = None
+        for k in ("neighbor", "peer-id", "vpls-peer-id", "neighbor-address", "peer-address", "next-hop-address"):
+            peer = _ip(d.get(k))
+            if peer:
+                break
+        if not peer:
+            continue
+        pw = d.get("pseudowire") if isinstance(d.get("pseudowire"), dict) else d
+        rec = peers.setdefault(peer, {"peer": peer, "pwId": "", "state": "", "localLabel": None, "remoteLabel": None})
+        rec["pwId"] = rec["pwId"] or str(d.get("pw-id") or d.get("pseudo-wire-id") or d.get("pseudowire-id")
+                                         or pw.get("pw-id") or pw.get("pseudo-wire-id") or "")
+        rec["state"] = rec["state"] or str(d.get("state") or pw.get("state") or d.get("pseudowire-state") or "")
+        for k, f in (("localLabel", "local-label"), ("remoteLabel", "remote-label")):
+            rec[k] = rec[k] if rec[k] is not None else (d.get(f) if d.get(f) is not None else
+                                                        (pw.get(f) if pw.get(f) is not None else get_label(d, f)))
+    return list(peers.values())
+
+
+def get_label(d, field):
+    for sub in ("local-signalling", "remote-signalling", "label-information"):
+        v = (d.get(sub) or {}).get(field) if isinstance(d.get(sub), dict) else None
+        if v is not None:
+            return v
+    return None
+
+
+def local_vpls_peers(client, node, ep, pe, log=print):
+    """(peers, source) for a Cisco bridge domain whose peers are not in the saved data.
+
+    1. this bridge domain's own oper state (one keyed read, l2vpnv2/active/bridge-domains/bridge-domain=G,N);
+    2. else, as the dashboard does, the T-LDP neighbours whose client is AToM (candidates: the far-end
+       trace then shows which of them carry this VPLS)."""
+    if pe.get("vendor") != "cisco" or ep.get("type") != "bridge-domain" or not ep.get("group"):
+        return [], ""
+    path = ("Cisco-IOS-XR-l2vpn-oper:l2vpnv2/active/bridge-domains/bridge-domain="
+            f"{quote(str(ep['group']), safe='')},{quote(str(ep['name']), safe='')}?content=nonconfig")
+    try:
+        found = bd_oper_peers(client.data_get(node, path))
+    except Exception as exc:  # older releases have no keyed read: fall back below
+        log(f"  bridge-domain oper read failed: {str(exc)[:160]}")
+        found = []
+    mine = set(pe.get("loopbacks") or [])
+    found = [p for p in found if p["peer"] not in mine]
+    if found:
+        return found, "bridge-domain oper state"
+    cands = [{"peer": ip, "pwId": "", "state": "", "localLabel": None, "remoteLabel": None}
+             for ip, n in sorted((pe.get("_ldp") or {}).items()) if "AToM" in (n.get("clients") or []) and ip not in mine]
+    return cands, "T-LDP neighbours with AToM (candidates)" if cands else ""
+
+
 # ---------------------------------------------------------------- the trace
 
 def trace_service(node, service_key, client=None, inv=None, log=print, max_peers=40):
@@ -184,9 +253,16 @@ def trace_service(node, service_key, client=None, inv=None, log=print, max_peers
     for pw in ep["pws"]:
         if pw.get("peer") and pw["peer"] not in peers and inv.resolve(pw["peer"]) != node:
             peers[pw["peer"]] = pw
+    local_peers, local_src = [], ""
+    if ep.get("type") == "bridge-domain" and (not ep["pws"] or str(ep.get("signaling", "")).startswith("BGP-AD")):
+        local_peers, local_src = local_vpls_peers(client, node, ep, pe, log)
+        log(f"  {len(local_peers)} peer(s) from {local_src or 'nowhere'}")
+        for lp in local_peers:
+            peers.setdefault(lp["peer"], {"peer": lp["peer"], "vcId": lp["pwId"], "kind": "bgp-auto", "oper": lp["state"]})
     ordered = sorted(peers, key=lambda ip: (topo.get(inv.odl_node_for(ip), {}).get("status") != "connected", ip))
     result = {"node": node, "service": service_key, "tracedAt": dt.datetime.now().isoformat(timespec="seconds"),
-              "peers": {}, "skipped": max(0, len(ordered) - max_peers)}
+              "peers": {}, "skipped": max(0, len(ordered) - max_peers),
+              "localPeers": local_peers, "localPeersFrom": local_src, "candidates": "candidates" in local_src}
     for ip in ordered[:max_peers]:
         pw = peers[ip]
         odl_node = inv.odl_node_for(ip)
