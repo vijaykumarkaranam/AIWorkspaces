@@ -150,6 +150,47 @@ def l2fib_pseudowires(*datasets):
     return by_key, by_bd
 
 
+def l2fib_bridges(*datasets):
+    """{bridge id: {"pws": [pw], "acs": [interface]}} from L2FIB cross-connects (l2fibx-cons): each
+    cross-connect joins a pseudowire or an AC (one segment) to a bridge port (the other segment)."""
+    out = {}
+    for data in datasets:
+        for d in walk_dicts(data):
+            if "segment1" not in d or "segment2" not in d:
+                continue
+            segs = [d.get("segment1") or {}, d.get("segment2") or {}]
+            bid = next((get(sg, "bp", "bridge-id") for sg in segs if get(sg, "bp", "bridge-id") is not None), None)
+            if bid is None:
+                continue
+            b = out.setdefault(str(bid), {"pws": [], "acs": []})
+            for sg in segs:
+                pw, ac = sg.get("pw"), sg.get("ac")
+                if isinstance(pw, dict) and pw.get("next-hop-address"):
+                    rec = {"peer": pw.get("next-hop-address"), "pwId": str(pw.get("pw-id") or ""),
+                           "oper": "up" if pw.get("next-hop-valid") else "down", "type": pw.get("pseudo-wire-id-type") or ""}
+                    if not any(x["peer"] == rec["peer"] and x["pwId"] == rec["pwId"] for x in b["pws"]):
+                        b["pws"].append(rec)
+                if isinstance(ac, dict):
+                    name = ac.get("interface-name") or ac.get("interface-handle")
+                    if name and name not in b["acs"]:
+                        b["acs"].append(name)
+    return out
+
+
+def bridge_ids(*datasets):
+    """{bridge id: (group, bridge-domain name)} from L2FIB bridge ports and bridge-domain oper data."""
+    out = {}
+    for data in datasets:
+        for d in walk_dicts(data):
+            if d.get("bridge-id") is not None and d.get("bd-name"):
+                out.setdefault(str(d["bridge-id"]), (str(d.get("group-name") or ""), str(d["bd-name"])))
+            info = d.get("bridge-domain-info") if isinstance(d.get("bridge-domain-info"), dict) else None
+            if info and info.get("bridge-domain-id") is not None and d.get("bridge-domain-name"):
+                out.setdefault(str(info["bridge-domain-id"]), (str(d.get("bridge-domain-group-name") or info.get("group-name") or ""),
+                                                               str(d["bridge-domain-name"])))
+    return out
+
+
 def _interfaces(data):
     out = {}
     for i in as_list(find_key(data, "interface")):
@@ -359,6 +400,23 @@ def pe_from_saved(node, data):
                                if op else None}
 
     bd_groups = first_of(("e2e-bridge-config", "cisco-l2vpn-config"), "bridge-domain-group")
+    # Pseudowires per bridge domain from the L2FIB cross-connects (the forwarding plane, as the dashboard's
+    # "XConnects (L2FIB)" card): bridge id -> name from bridge ports or bridge-domain oper, or else from the
+    # bridge domain whose configured AC sits on that bridge.
+    xbridges = l2fib_bridges(data.get("e2e-l2fibx-cons") or {}, data.get("cisco-l2vpn") or {})
+    if xbridges:
+        names = bridge_ids(data.get("e2e-bridge-ports") or {}, data.get("e2e-bridge-oper") or {}, data.get("cisco-l2vpn") or {})
+        ac_bd = {a.get("name"): (str(g.get("name")), str(bd.get("name"))) for g in bd_groups
+                 for bd in as_list(get(g, "bridge-domains", "bridge-domain"))
+                 for a in as_list(get(bd, "bd-attachment-circuits", "bd-attachment-circuit")) if a.get("name")}
+        for bid, xb in xbridges.items():
+            key_ = names.get(bid) or next((ac_bd[a] for a in xb["acs"] if a in ac_bd), None)
+            if not key_:
+                continue
+            lst = bd_pws.setdefault(key_, [])
+            for rec in xb["pws"]:
+                if not any(x["peer"] == rec["peer"] and x["pwId"] == rec["pwId"] for x in lst):
+                    lst.append(rec)
     for grp in bd_groups:
         for bd in as_list(get(grp, "bridge-domains", "bridge-domain")):
             gname, bname = str(grp.get("name")), str(bd.get("name"))

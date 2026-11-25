@@ -300,3 +300,24 @@ class AdapterTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class L2fibBridgeTest(unittest.TestCase):
+    """Per-bridge-domain pseudowires from L2FIB cross-connects only (the dashboard's 'XConnects (L2FIB)' data)."""
+
+    def test_bridge_id_mapped_by_its_ac_when_no_names_are_saved(self):
+        d = cisco_data(ac_state="im-state-up")
+        d.pop("e2e-bridge-ports")  # the big reads did not finish: only the cross-connects are saved
+        d.pop("cisco-l2vpn")
+        d["e2e-l2fibx-cons"] = {"Cisco-IOS-XR-l2vpn-oper:l2fibx-cons": {"l2fibx-con": [
+            {"xcid": "1", "segment1": {"data-type": "mgmt-l2fib-data-type-ac", "ac": {"interface-name": "GigabitEthernet0/0/0/2.20"}},
+             "segment2": {"data-type": "mgmt-l2fib-data-type-bridge-port", "bp": {"bridge-id": 7}}},
+            {"xcid": "2", "segment1": {"data-type": "mgmt-l2fib-data-type-atom", "pw": {
+                "next-hop-address": "10.9.9.1", "pw-id": "555", "next-hop-valid": True}},
+             "segment2": {"data-type": "mgmt-l2fib-data-type-bridge-port", "bp": {"bridge-id": 7}}},
+            {"xcid": "3", "segment1": {"data-type": "mgmt-l2fib-data-type-atom", "pw": {
+                "next-hop-address": "10.9.9.2", "pw-id": "556", "next-hop-valid": False}},
+             "segment2": {"data-type": "mgmt-l2fib-data-type-bridge-port", "bp": {"bridge-id": 8}}}]}}
+        pe = cisco.pe_from_saved("10.0.0.2", d)
+        bd = next(e for e in pe["endpoints"] if e["key"] == "bridge-domain:BG/BD200")
+        self.assertEqual([(p["peer"], p["oper"]) for p in bd["pws"]], [("10.9.9.1", "up")])  # bridge 8 is another BD
